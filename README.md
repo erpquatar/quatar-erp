@@ -6,6 +6,9 @@ Phần mềm quản trị cho nhà máy phân bón Quatar: kinh doanh, kho, sả
 - **Dữ liệu:** Supabase (Postgres + đăng nhập + phân quyền theo vai trò, RLS trên mọi bảng).
 - **Cơ sở dữ liệu:** các file migration nằm trong `db/`, chạy theo thứ tự số.
 
+## Phiên bản 0.4 (22/11/2026)
+- Chính sách bán hàng: mỗi loại đại lý có CK tối đa chung và nhiều chương trình (điều kiện đạt → tặng hàng và/hoặc chiết khấu); lên đơn tự báo chương trình đạt, tự ghi hàng tặng; CK của chương trình đã đạt không phải chờ CEO.
+
 ## Phiên bản 0.3 (22/11/2026)
 - Cài được như ứng dụng (PWA) trên Android, iPhone, máy tính: biểu tượng riêng, mở toàn màn hình.
 

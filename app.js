@@ -3,7 +3,7 @@ const CFG = {
   url: 'https://qfjarxoymmabropgscek.supabase.co',
   key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFmamFyeG95bW1hYnJvcGdzY2VrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTUzMTU1NTgsImV4cCI6MjExMDg5MTU1OH0._ccBX9tTCE_0WxhgkP6hqpmRaTbM3bK5G6L3vExTafo',
   domain: 'erp.quatar.vn',
-  version: '0.3 · 22/11/2026'
+  version: '0.4 · 22/11/2026'
 };
 const SB = window.__SB_MOCK || (await import('https://esm.sh/@supabase/supabase-js@2.45.4')).createClient(CFG.url, CFG.key);
 
@@ -115,7 +115,7 @@ $('#chpw').onclick = () => {
 function meChip() { const ini = (ME.ho_ten || '?').trim().split(/\s+/).pop()[0]; $('#me').innerHTML = `<span class="av">${esc(ini)}</span><span><b>${esc(ME.ho_ten)}</b><br><span class="note">${esc(rl(ME))}${ME.vung ? ' · ' + esc(ME.vung) : ''}</span></span>`; }
 
 // ---------- dữ liệu danh mục ----------
-const TABLES = ['ck_levels', 'policy_periods', 'units', 'regions', 'item_groups', 'departments', 'stock_reasons', 'warehouses', 'locations', 'products', 'materials', 'suppliers', 'dealers', 'carriers', 'machines', 'profiles'];
+const TABLES = ['ck_levels', 'policy_periods', 'policy_programs', 'units', 'regions', 'item_groups', 'departments', 'stock_reasons', 'warehouses', 'locations', 'products', 'materials', 'suppliers', 'dealers', 'carriers', 'machines', 'profiles'];
 async function loadMaster(only) {
   const list = only ? [].concat(only) : TABLES;
   await Promise.all(list.map(async t => { const { data } = await SB.from(t).select('*'); D[t] = data || []; }));
@@ -155,7 +155,7 @@ function route() {
 window.addEventListener('hashchange', route);
 const V = {};
 function placeholder() {
-  $('#view').innerHTML = `<div class="ph"><b>${esc(VIEWS[cur]?.t)}</b><br>Phân hệ này đang được xây dựng ở bước tiếp theo. Bản demo đã có giao diện mẫu để tham khảo.</div>`;
+  $('#view').innerHTML = `<div class="empty"><b>${esc(VIEWS[cur]?.t)}</b><br>Phân hệ này đang được xây dựng ở bước tiếp theo. Bản demo đã có giao diện mẫu để tham khảo.</div>`;
 }
 
 // ---------- Tổng quan & thiết lập ----------
@@ -650,6 +650,7 @@ function dealerCard(id) {
   const db = DEBT[id] || {}, nv = userName(d.nvkd_id), lim = +d.han_muc || 0;
   return `<div class="card" style="margin-top:6px;padding:10px 12px;font-size:14px">${d.dia_chi ? `<div><b>Địa chỉ:</b> ${esc(d.dia_chi)}</div>` : ''}<div>${d.sdt ? `<b>Điện thoại:</b> ${esc(d.sdt)}` : '<span class="note">Chưa có SĐT</span>'}${d.mst ? ` · <b>MST:</b> ${esc(d.mst)}` : ''}</div>
   <div><b>Loại:</b> ${esc(d.loai)}${nv ? ` · <b>NVKD:</b> ${esc(nv)}` : ''} · <b>CK tối đa:</b> ${ckLimit(d.loai)}%</div>
+  ${activeProgs(d.loai).length ? `<div><b>Chương trình:</b> ${activeProgs(d.loai).map(g => esc(dkText(g) + (tangText(g) ? ' → tặng ' + tangText(g) : '') + (g.ck_pct != null ? ' → CK ' + num(g.ck_pct, 2) + '%' : ''))).join('; ')}</div>` : ''}
   <div><b>Dư nợ:</b> ${vnd(db.du_no)} / hạn mức ${vnd(lim)}${+db.qua_han_ngay > 0 ? ` · <span class="bad">quá hạn ${db.qua_han_ngay} ngày (${vnd(db.qua_han_tien)})</span>` : ''}</div></div>`;
 }
 function orderForm(edit) {
@@ -660,7 +661,8 @@ function orderForm(edit) {
   oRender(dls);
 }
 function oCalc() {
-  const d = dlr(OF.dealer), L = OF.lines.filter(l => l.sku && +l.q > 0), hang = L.reduce((a, l) => a + l.q * l.gia, 0), lim = d ? ckLimit(d.loai) : 0;
+  const d = dlr(OF.dealer), L = OF.lines.filter(l => l.sku && +l.q > 0), hang = L.reduce((a, l) => a + l.q * l.gia, 0);
+  const reached = d ? activeProgs(d.loai).filter(g => progReached(g, L)) : [], lim = d ? Math.max(ckLimit(d.loai), ...reached.map(g => +g.ck_pct || 0)) : 0;
   const ck = OF.ck == null || OF.ck === '' ? lim : +OF.ck, tt = hang * (1 - ck / 100), db = DEBT[OF.dealer] || {}, v = [];
   if (d) {
     if (ck > lim) v.push(`Chiết khấu ${ck}% vượt mức ${lim}% của ${d.loai}`);
@@ -668,7 +670,7 @@ function oCalc() {
     if ((+db.du_no || 0) + tt > (+d.han_muc || 0)) v.push(`Dư nợ sau đơn ${vnd((+db.du_no || 0) + tt)} vượt hạn mức ${vnd(d.han_muc)}`);
     if (+db.qua_han_ngay > (+d.khoa_qua_han_ngay || 0)) v.push(`Nợ quá hạn ${db.qua_han_ngay} ngày (khóa khi > ${d.khoa_qua_han_ngay} ngày)`);
   }
-  return { L, hang, ck, lim, tt, v };
+  return { L, hang, ck, lim, tt, v, reached };
 }
 function oRender(dls) {
   const d = dlr(OF.dealer), c = oCalc(), canPick = ME.role !== 'dai_ly';
@@ -687,7 +689,7 @@ function oRender(dls) {
 }
 function oSum() {
   const c = oCalc();
-  $('#of-sum').innerHTML = `<div class="row between"><span>${c.L.length} sản phẩm · tiền hàng ${vnd(c.hang)} · CK ${c.ck}%</span><b style="font-size:18px">Thanh toán: ${vnd(c.tt)}</b></div>${c.v.length ? `<div style="margin-top:8px">${c.v.map(x => `<div class="alert"><span class="bad">⚠</span><span>${esc(x)}</span></div>`).join('')}<p class="note" style="margin:6px 0 0">Đơn vẫn gửi được; khi Kế toán duyệt, các điểm vượt chính sách sẽ tự chuyển CEO quyết.</p></div>` : ''}`;
+  $('#of-sum').innerHTML = `<div class="row between"><span>${c.L.length} sản phẩm · tiền hàng ${vnd(c.hang)} · CK ${c.ck}%</span><b style="font-size:18px">Thanh toán: ${vnd(c.tt)}</b></div>${c.reached.length ? `<div style="margin-top:8px">${c.reached.map(g => `<div class="alert"><span class="ok">✓</span><span><b>Đạt:</b> ${esc(g.ten ? g.ten + ' – ' : '')}${esc(dkText(g))}${tangText(g) ? ' → 🎁 tặng ' + esc(tangText(g)) : ''}${g.ck_pct != null ? ' → CK ' + num(g.ck_pct, 2) + '%' : ''}</span></div>`).join('')}</div>` : ''}${c.v.length ? `<div style="margin-top:8px">${c.v.map(x => `<div class="alert"><span class="bad">⚠</span><span>${esc(x)}</span></div>`).join('')}<p class="note" style="margin:6px 0 0">Đơn vẫn gửi được; khi Kế toán duyệt, các điểm vượt chính sách sẽ tự chuyển CEO quyết.</p></div>` : ''}`;
   OF.lines.forEach((l, i) => { const t = $('#ott-' + i); if (t) t.textContent = l.q && l.gia ? vnd(l.q * l.gia) : '—'; });
 }
 function oBind(dls) {
@@ -705,7 +707,9 @@ function oBind(dls) {
     if (!OF.dealer) return e('Chọn đại lý từ danh sách');
     if (OF.lines.some(l => l.sku && !(+l.q > 0))) return e('Nhập số lượng cho từng sản phẩm');
     if (!c.L.length) return e('Đơn chưa có sản phẩm');
-    const lines = c.L.map(l => ({ sku: l.sku, qty: +l.q, gia: +l.gia })), ck = OF.ck == null ? null : +OF.ck;
+    const lines = c.L.map(l => ({ sku: l.sku, qty: +l.q, gia: +l.gia })), ck = OF.ck == null ? c.lim : +OF.ck;
+    const gifts = c.reached.filter(g => tangText(g)).map(g => 'Tặng ' + tangText(g) + ' (' + (g.ten || dkText(g)) + ')');
+    if (gifts.length && !(OF.km || '').includes('Tặng ')) OF.km = [OF.km, ...gifts].filter(Boolean).join('; ');
     $('#of-go').disabled = true;
     const r = OF.id ? await SB.rpc('resubmit_order', { p_order: OF.id, p_lines: lines, p_ck: ck, p_km: OF.km || null })
       : await SB.rpc('create_order', { p_dealer: OF.dealer, p_lines: lines, p_ck: ck, p_km: OF.km || null, p_offline_id: OF.oid });
@@ -804,22 +808,84 @@ async function dealerOpen(id) {
   $('#r-go') && ($('#r-go').onclick = async () => { const t = +$('#r-t').value; if (!(t > 0)) return $('#r-e').textContent = 'Nhập số tiền'; const { error } = await SB.rpc('record_receipt', { p_dealer: id, p_amount: t, p_note: $('#r-n').value.trim() || null }); if (error) return $('#r-e').textContent = errMsg(error); closeSheet(); toast('Đã ghi thu ' + vnd(t)); V.dealers(); });
 }
 
-// ---------- CHÍNH SÁCH CHIẾT KHẤU ----------
+// ---------- CHÍNH SÁCH: CK TỐI ĐA + CHƯƠNG TRÌNH (điều kiện đạt, tặng hàng, CK) ----------
+const prodName = sku => prod(sku)?.ten || sku;
+const dkText = g => g.dk_sl ? `Mua ≥ ${num(g.dk_sl, 3)} ${g.dk_dvt || ''} ${g.dk_sku ? prodName(g.dk_sku) : 'tổng các sản phẩm'}`.trim() + (g.dk_mo_ta ? ' · ' + g.dk_mo_ta : '') : (g.dk_mo_ta || 'Không điều kiện');
+const tangText = g => g.tang_sl ? `${num(g.tang_sl, 3)} ${g.tang_dvt || ''} ${g.tang_ten || ''}`.replace(/\s+/g, ' ').trim() : '';
+const activeProgs = loai => { const p = (D.policy_periods || []).find(x => x.active); return (D.policy_programs || []).filter(g => g.period_id === p?.id && g.loai_dai_ly === loai && g.active !== false); };
+function progQty(g, lines) { return lines.filter(l => l.sku && (!g.dk_sku || l.sku === g.dk_sku)).reduce((a, l) => { const p = prod(l.sku), u = (g.dk_dvt || '').toLowerCase(), kg = +p?.kg_moi_dv || 0; return a + (+l.q || 0) * (u === 'tấn' ? kg / 1000 : u === 'kg' || u === 'lít' ? kg : 1); }, 0); }
+const progReached = (g, lines) => progQty(g, lines) >= (+g.dk_sl || 0) && lines.some(l => l.sku);
 V.policy = async () => {
-  await loadMaster(['policy_periods', 'ck_levels']);
-  const P = [...D.policy_periods].sort((a, b) => String(b.tu_ngay).localeCompare(String(a.tu_ngay))), ed = can('policy', 'S') || can('policy', 'T');
-  $('#view').innerHTML = `<div class="row between" style="margin-bottom:10px"><p class="note" style="margin:0">Mức chiết khấu tối đa theo loại đại lý, áp dụng cho kỳ chính sách đang hiệu lực. Đơn có CK cao hơn hoặc giá thấp hơn giá chung sẽ tự chuyển CEO duyệt.</p>${ed ? '<button class="btn pri" id="pnew">+ Kỳ chính sách mới</button>' : ''}</div>
-  ${P.map(p => `<div class="card" style="margin-bottom:12px"><div class="row between"><div><b>${esc(p.ten)}</b> <span class="note">${fdate(p.tu_ngay)} – ${fdate(p.den_ngay)}</span> ${p.active ? '<span class="pill p-ok">Đang áp dụng</span>' : ''}</div>${ed && !p.active ? `<button class="btn sm" data-pact="${p.id}">Áp dụng kỳ này</button>` : ''}</div>
-  <table style="margin-top:8px"><thead><tr><th>Loại đại lý</th><th class="n">CK tối đa (%)</th></tr></thead><tbody>${DEALER_TYPES.map(t => { const v = D.ck_levels.find(c => c.period_id === p.id && c.loai_dai_ly === t)?.ck_max_pct; return `<tr><td>${t}</td><td class="n">${ed ? `<input type="number" step="any" inputmode="decimal" data-ck="${p.id}|${t}" value="${v ?? ''}" style="width:90px;text-align:right;border:1px solid var(--line);border-radius:6px;padding:6px">` : v ?? '—'}</td></tr>`; }).join('')}</tbody></table></div>`).join('') || '<div class="ph">Chưa có kỳ chính sách. Chưa có kỳ thì mọi đơn có chiết khấu đều chuyển CEO duyệt.</div>'}`;
+  await loadMaster(['policy_periods', 'ck_levels', 'policy_programs']);
+  const P = [...D.policy_periods].sort((a, b) => (b.active - a.active) || String(b.tu_ngay).localeCompare(String(a.tu_ngay))), ed = can('policy', 'S') || can('policy', 'T');
+  const inp = 'width:80px;text-align:right;border:1px solid var(--line);border-radius:6px;padding:6px';
+  $('#view').innerHTML = `<div class="row between" style="margin-bottom:10px"><p class="note" style="margin:0;max-width:760px">Mỗi loại đại lý có <b>CK tối đa chung</b> và có thể có <b>nhiều chương trình</b>: điều kiện đạt → tặng hàng và/hoặc chiết khấu. Khi lên đơn, app tự báo chương trình đơn đã đạt. Đơn có CK cao hơn mức cho phép (kể cả mức của chương trình đã đạt) sẽ chuyển CEO duyệt.</p>${ed ? '<button class="btn pri" id="pnew">+ Kỳ chính sách mới</button>' : ''}</div>
+  ${P.map(p => `<div class="card" style="margin-bottom:14px"><div class="row between"><div><b>${esc(p.ten)}</b> <span class="note">${fdate(p.tu_ngay)} – ${fdate(p.den_ngay)}</span> ${p.active ? '<span class="pill p-ok">Đang áp dụng</span>' : ''}</div>${ed && !p.active ? `<button class="btn sm" data-pact="${p.id}">Áp dụng kỳ này</button>` : ''}</div>
+  <div class="scroll"><table style="margin-top:8px"><thead><tr><th style="width:120px">Loại đại lý</th><th>Điều kiện đạt</th><th>Tặng hàng</th><th class="n" style="width:110px">CK tối đa (%)</th>${ed ? '<th style="width:70px"></th>' : ''}</tr></thead><tbody>
+  ${DEALER_TYPES.map(t => { const v = D.ck_levels.find(c => c.period_id === p.id && c.loai_dai_ly === t)?.ck_max_pct, gs = D.policy_programs.filter(g => g.period_id === p.id && g.loai_dai_ly === t);
+    return `<tr style="background:var(--bg)"><td><b>${t}</b></td><td class="note">Mức chung (mọi đơn)</td><td></td><td class="n">${ed ? `<input type="number" step="any" inputmode="decimal" data-ck="${p.id}|${t}" value="${v ?? ''}" style="${inp}">` : v ?? '—'}</td>${ed ? '<td></td>' : ''}</tr>
+    ${gs.map(g => `<tr class="${g.active === false ? 'off' : ''}"><td class="note">↳ ${esc(g.ten || 'Chương trình')}</td><td>${esc(dkText(g))}</td><td>${tangText(g) ? '🎁 ' + esc(tangText(g)) : '<span class="note">—</span>'}</td><td class="n">${g.ck_pct != null ? num(g.ck_pct, 2) : '<span class="note">—</span>'}</td>${ed ? `<td><button class="btn sm" data-pg="${g.id}">Sửa</button></td>` : ''}</tr>`).join('')}
+    ${ed ? `<tr><td></td><td colspan="${ed ? 4 : 3}"><button class="btn sm" data-pgnew="${p.id}|${t}">+ Thêm chương trình cho ${t}</button></td></tr>` : ''}`; }).join('')}
+  </tbody></table></div></div>`).join('') || '<div class="empty">Chưa có kỳ chính sách. Chưa có kỳ thì mọi đơn có chiết khấu đều chuyển CEO duyệt.</div>'}`;
   $$('[data-ck]').forEach(inp => inp.onchange = async () => { const [pid, t] = inp.dataset.ck.split('|'); const v = inp.value === '' ? null : +inp.value;
     const r = v == null ? await SB.from('ck_levels').delete().eq('period_id', +pid).eq('loai_dai_ly', t) : await SB.from('ck_levels').upsert({ period_id: +pid, loai_dai_ly: t, ck_max_pct: v });
-    if (r.error) return toast(errMsg(r.error)); await loadMaster('ck_levels'); toast('Đã lưu CK ' + t); });
+    if (r.error) return toast(errMsg(r.error)); await loadMaster('ck_levels'); toast('Đã lưu CK tối đa ' + t); });
   $$('[data-pact]').forEach(b => b.onclick = async () => { await SB.from('policy_periods').update({ active: false }).eq('active', true); const { error } = await SB.from('policy_periods').update({ active: true }).eq('id', +b.dataset.pact); if (error) return toast(errMsg(error)); toast('Đã áp dụng kỳ chính sách'); V.policy(); });
+  $$('[data-pgnew]').forEach(b => b.onclick = () => { const [pid, t] = b.dataset.pgnew.split('|'); progForm({ period_id: +pid, loai_dai_ly: t }); });
+  $$('[data-pg]').forEach(b => b.onclick = () => progForm(D.policy_programs.find(g => g.id === +b.dataset.pg)));
   $('#pnew') && ($('#pnew').onclick = () => {
-    openSheet(`<div class="row between"><h2>Kỳ chính sách mới</h2><button class="btn sm" id="close">Đóng</button></div><div class="field"><label for="p-t">Tên kỳ</label><input id="p-t" placeholder="vd: Vụ Đông Xuân 2026–2027"></div><div class="f2"><div class="field"><label for="p-a">Từ ngày</label><input id="p-a" type="date" value="${today()}"></div><div class="field"><label for="p-b">Đến ngày</label><input id="p-b" type="date"></div></div><div class="err bad" id="p-e"></div><button class="btn pri" id="p-go">Tạo kỳ</button>`);
-    $('#p-go').onclick = async () => { const t = $('#p-t').value.trim(), a = $('#p-a').value, b = $('#p-b').value; if (!t || !a || !b) return $('#p-e').textContent = 'Nhập đủ tên và thời gian'; const { error } = await SB.from('policy_periods').insert({ ten: t, tu_ngay: a, den_ngay: b, active: !D.policy_periods.some(p => p.active) }); if (error) return $('#p-e').textContent = errMsg(error); closeSheet(); toast('Đã tạo kỳ chính sách'); V.policy(); };
+    openSheet(`<div class="row between"><h2>Kỳ chính sách mới</h2><button class="btn sm" id="close">Đóng</button></div><div class="field"><label for="p-t">Tên kỳ</label><input id="p-t" placeholder="vd: Vụ Đông Xuân 2026–2027"></div><div class="f2"><div class="field"><label for="p-a">Từ ngày</label><input id="p-a" type="date" value="${today()}"></div><div class="field"><label for="p-b">Đến ngày</label><input id="p-b" type="date"></div></div>
+    ${P.length ? `<label class="chk"><input type="checkbox" id="p-cp" checked> Sao chép CK tối đa và các chương trình từ kỳ "${esc(P[0].ten)}"</label>` : ''}<div class="err bad" id="p-e"></div><button class="btn pri" id="p-go">Tạo kỳ</button>`);
+    $('#p-go').onclick = async () => { const t = $('#p-t').value.trim(), a = $('#p-a').value, b = $('#p-b').value; if (!t || !a || !b) return $('#p-e').textContent = 'Nhập đủ tên và thời gian';
+      const { data, error } = await SB.from('policy_periods').insert({ ten: t, tu_ngay: a, den_ngay: b, active: !D.policy_periods.some(p => p.active) }).select().single(); if (error) return $('#p-e').textContent = errMsg(error);
+      if ($('#p-cp')?.checked && data) { const src = P[0].id;
+        const cks = D.ck_levels.filter(c => c.period_id === src).map(c => ({ ...c, period_id: data.id })); if (cks.length) await SB.from('ck_levels').insert(cks);
+        const gs = D.policy_programs.filter(g => g.period_id === src).map(({ id, created_at, ...g }) => ({ ...g, period_id: data.id })); if (gs.length) await SB.from('policy_programs').insert(gs); }
+      closeSheet(); toast('Đã tạo kỳ chính sách'); V.policy(); };
   });
 };
+function progForm(g) {
+  const isNew = !g.id, units = (D.units || []).map(u => u.id), its = items();
+  const uSel = (id, v) => `<select id="${id}"><option value="">—</option>${[...new Set([...units, 'tấn', 'kg'])].map(u => `<option ${u === v ? 'selected' : ''}>${esc(u)}</option>`).join('')}</select>`;
+  openSheet(`<div class="row between"><h2>${isNew ? 'Thêm chương trình' : 'Sửa chương trình'} · ${esc(g.loai_dai_ly)}</h2><button class="btn sm" id="close">Đóng</button></div>
+  <div class="field"><label for="g-ten">Tên chương trình</label><input id="g-ten" value="${esc(g.ten || '')}" placeholder="vd: Mua 100 bao NPK tặng 5 bao"></div>
+  <div class="card" style="margin-bottom:10px"><b>Điều kiện đạt</b><div class="f2" style="margin-top:6px">
+   <div class="field full"><label for="g-sku">Sản phẩm áp dụng (để trống = tính tổng mọi sản phẩm)</label><div class="vitem"><input class="ac" id="g-sku" value="${esc(g.dk_sku ? prodName(g.dk_sku) : '')}" placeholder="Gõ tên hoặc mã sản phẩm…" autocomplete="off"><div class="acl" id="g-skul"></div></div></div>
+   <div class="field"><label for="g-sl">Số lượng tối thiểu</label><input id="g-sl" type="number" step="any" inputmode="decimal" value="${g.dk_sl ?? ''}"></div>
+   <div class="field"><label for="g-dvt">Đơn vị</label>${uSel('g-dvt', g.dk_dvt)}</div>
+   <div class="field full"><label for="g-mt">Mô tả thêm điều kiện</label><input id="g-mt" value="${esc(g.dk_mo_ta || '')}" placeholder="vd: thanh toán trước 50%, lấy trong 1 lần"></div></div></div>
+  <div class="card" style="margin-bottom:10px"><b>🎁 Tặng hàng</b> <span class="note">(để trống nếu chỉ chiết khấu)</span><div class="f2" style="margin-top:6px">
+   <div class="field full"><label for="g-tg">Mặt hàng tặng (chọn trong danh mục hoặc gõ tên hàng ngoài danh mục)</label><div class="vitem"><input class="ac" id="g-tg" value="${esc(g.tang_ten || '')}" placeholder="vd: NPK 16-16-16 bao 50kg, Nón Quatar…" autocomplete="off"><div class="acl" id="g-tgl"></div></div></div>
+   <div class="field"><label for="g-tsl">Số lượng tặng</label><input id="g-tsl" type="number" step="any" inputmode="decimal" value="${g.tang_sl ?? ''}"></div>
+   <div class="field"><label for="g-tdvt">Đơn vị</label>${uSel('g-tdvt', g.tang_dvt)}</div></div></div>
+  <div class="f2"><div class="field"><label for="g-ck">Chiết khấu khi đạt (%) <span class="note">(để trống nếu chỉ tặng hàng)</span></label><input id="g-ck" type="number" step="any" inputmode="decimal" value="${g.ck_pct ?? ''}"></div>
+   <div class="field"><label for="g-gc">Ghi chú</label><input id="g-gc" value="${esc(g.ghi_chu || '')}"></div></div>
+  ${!isNew ? `<label class="chk"><input type="checkbox" id="g-act" ${g.active !== false ? 'checked' : ''}> Đang áp dụng</label>` : ''}
+  <div class="card" id="g-prev" style="margin:8px 0"></div><div class="err bad" id="g-e" style="min-height:20px"></div>
+  <div class="row"><button class="btn pri" id="g-go">${isNew ? 'Thêm chương trình' : 'Lưu'}</button>${!isNew ? '<button class="btn bad" id="g-del">Xóa</button>' : ''}</div>`, true);
+  const st = { dk_sku: g.dk_sku || null, tang_ma: g.tang_ma || null };
+  const read = () => ({ ten: $('#g-ten').value.trim() || null, dk_sku: $('#g-sku').value.trim() ? st.dk_sku : null, dk_sl: $('#g-sl').value === '' ? null : +$('#g-sl').value, dk_dvt: $('#g-dvt').value || null, dk_mo_ta: $('#g-mt').value.trim() || null,
+    tang_ma: st.tang_ma, tang_ten: $('#g-tg').value.trim() || null, tang_sl: $('#g-tsl').value === '' ? null : +$('#g-tsl').value, tang_dvt: $('#g-tdvt').value || null, ck_pct: $('#g-ck').value === '' ? null : +$('#g-ck').value, ghi_chu: $('#g-gc').value.trim() || null });
+  const prev = () => { const x = read(); $('#g-prev').innerHTML = `<b>Tóm tắt:</b> ${esc(dkText(x))}${tangText(x) ? ' → tặng ' + esc(tangText(x)) : ''}${x.ck_pct != null ? ` → chiết khấu ${num(x.ck_pct, 2)}%` : ''}`; };
+  $$('#sheet input, #sheet select').forEach(el => el.addEventListener('input', prev)); prev();
+  acBox($('#g-sku'), $('#g-skul'), () => (D.products || []).filter(p => p.active !== false).map(p => ({ ...p, s: p.sku + ' ' + p.ten })), p => `<b>${esc(p.ten)}</b><span>${esc(p.sku)} · ${esc(p.dvt)}</span>`, p => { st.dk_sku = p.sku; $('#g-sku').value = p.ten; if (!$('#g-dvt').value) $('#g-dvt').value = p.dvt; prev(); });
+  $('#g-sku').addEventListener('input', () => { st.dk_sku = null; });
+  acBox($('#g-tg'), $('#g-tgl'), () => its.filter(i => i.active).map(i => ({ ...i, s: i.code + ' ' + i.ten })), i => `<b>${esc(i.ten)}</b><span>${esc(i.code)} · ${esc(i.kind)} · ${esc(i.dvt)}</span>`, i => { st.tang_ma = i.code; $('#g-tg').value = i.ten; if (!$('#g-tdvt').value) $('#g-tdvt').value = i.dvt; prev(); });
+  $('#g-tg').addEventListener('input', () => { st.tang_ma = null; });
+  const e = t => $('#g-e').textContent = t;
+  $('#g-go').onclick = async () => {
+    const x = read();
+    if ($('#g-sku').value.trim() && !st.dk_sku) return e('Sản phẩm áp dụng chưa khớp danh mục – chọn trong gợi ý hoặc để trống');
+    if (x.dk_sl != null && !x.dk_dvt) return e('Chọn đơn vị cho số lượng điều kiện');
+    if (x.tang_sl == null && x.ck_pct == null) return e('Nhập ít nhất một ưu đãi: tặng hàng hoặc chiết khấu');
+    if (x.tang_sl != null && !x.tang_ten) return e('Nhập mặt hàng tặng');
+    if (x.tang_ten && x.tang_sl == null) return e('Nhập số lượng tặng');
+    if (!isNew) x.active = $('#g-act').checked;
+    const r = isNew ? await SB.from('policy_programs').insert({ ...x, period_id: g.period_id, loai_dai_ly: g.loai_dai_ly }) : await SB.from('policy_programs').update(x).eq('id', g.id);
+    if (r.error) return e(errMsg(r.error)); await loadMaster('policy_programs'); closeSheet(); toast(isNew ? 'Đã thêm chương trình' : 'Đã lưu'); V.policy();
+  };
+  $('#g-del') && ($('#g-del').onclick = async () => { const b = $('#g-del'); if (!b.dataset.ok) { b.dataset.ok = 1; b.textContent = 'Bấm lần nữa để xóa'; return; } const { error } = await SB.from('policy_programs').delete().eq('id', g.id); if (error) return e(errMsg(error)); await loadMaster('policy_programs'); closeSheet(); toast('Đã xóa chương trình'); V.policy(); });
+}
 
 // ---------- khởi động ----------
 (async () => {

@@ -148,7 +148,7 @@ tr.click{cursor:pointer}tr.click:hover td{background:color-mix(in srgb,var(--lea
 @media(prefers-reduced-motion:reduce){.toast{transition:none}}
 
 /* ---- bổ sung cho app thật ---- */
-.ph{border:1px dashed var(--line);border-radius:12px;padding:28px;text-align:center;color:var(--soft)}
+.empty{border:1px dashed var(--line);border-radius:12px;padding:28px;text-align:center;color:var(--soft)}
 .spin{display:inline-block;width:16px;height:16px;border:2px solid var(--line);border-top-color:var(--leaf);border-radius:50%;animation:sp 1s linear infinite;vertical-align:-3px}
 @keyframes sp{to{transform:rotate(360deg)}}
 .f2{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0 12px}
