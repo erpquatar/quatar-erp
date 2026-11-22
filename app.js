@@ -3,7 +3,7 @@ const CFG = {
   url: 'https://qfjarxoymmabropgscek.supabase.co',
   key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFmamFyeG95bW1hYnJvcGdzY2VrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTUzMTU1NTgsImV4cCI6MjExMDg5MTU1OH0._ccBX9tTCE_0WxhgkP6hqpmRaTbM3bK5G6L3vExTafo',
   domain: 'erp.quatar.vn',
-  version: '0.1 · 22/11/2026'
+  version: '0.2 · 22/11/2026'
 };
 const SB = window.__SB_MOCK || (await import('https://esm.sh/@supabase/supabase-js@2.45.4')).createClient(CFG.url, CFG.key);
 
@@ -115,7 +115,7 @@ $('#chpw').onclick = () => {
 function meChip() { const ini = (ME.ho_ten || '?').trim().split(/\s+/).pop()[0]; $('#me').innerHTML = `<span class="av">${esc(ini)}</span><span><b>${esc(ME.ho_ten)}</b><br><span class="note">${esc(rl(ME))}${ME.vung ? ' · ' + esc(ME.vung) : ''}</span></span>`; }
 
 // ---------- dữ liệu danh mục ----------
-const TABLES = ['units', 'regions', 'item_groups', 'departments', 'stock_reasons', 'warehouses', 'locations', 'products', 'materials', 'suppliers', 'dealers', 'carriers', 'machines', 'profiles'];
+const TABLES = ['ck_levels', 'policy_periods', 'units', 'regions', 'item_groups', 'departments', 'stock_reasons', 'warehouses', 'locations', 'products', 'materials', 'suppliers', 'dealers', 'carriers', 'machines', 'profiles'];
 async function loadMaster(only) {
   const list = only ? [].concat(only) : TABLES;
   await Promise.all(list.map(async t => { const { data } = await SB.from(t).select('*'); D[t] = data || []; }));
@@ -613,6 +613,213 @@ function vPrint(d, rows, lots, tot) {
   ${d.status === 'da_huy' ? '<p style="color:red;font-weight:bold;text-align:center">PHIẾU ĐÃ HỦY</p>' : ''}<script>print()<\/script></body></html>`);
   w.document.close();
 }
+
+// ---------- ĐƠN HÀNG ----------
+const OST = { cho_dong_bo: ['Chờ đồng bộ', 'p-wait'], cho_gsv: ['Chờ GSV duyệt', 'p-wait'], cho_kt: ['Chờ Kế toán duyệt', 'p-wait'], cho_ceo: ['Chờ CEO duyệt ngoại lệ', 'p-bad'], cho_sx: ['Chờ sản xuất', 'p-info'], cho_xuat: ['Chờ xếp xe', 'p-info'], xep_xe: ['Đã xếp xe – chờ xuất kho', 'p-info'], da_xuat: ['Đang giao', 'p-info'], da_giao: ['Đã giao – chờ ghi công nợ', 'p-wait'], hoan_tat: ['Hoàn tất', 'p-ok'], tra_lai: ['Bị trả lại', 'p-bad'], huy: ['Đã hủy', 'p-bad'] };
+const OFLOW = [['cho_gsv', 'GSV duyệt'], ['cho_kt', 'Kế toán duyệt'], ['cho_xuat', 'Xếp xe'], ['xep_xe', 'Xuất kho'], ['da_xuat', 'Giao hàng'], ['da_giao', 'Ghi công nợ'], ['hoan_tat', 'Hoàn tất']];
+const OACT = { cho_gsv: ['gsv', 'ceo'], cho_kt: ['ke_toan', 'ceo'], cho_ceo: ['ceo'], cho_xuat: ['ke_toan', 'ceo'], xep_xe: ['to_truong', 'ceo'], da_xuat: ['ke_toan', 'ceo'], da_giao: ['ke_toan', 'ceo'] };
+const myTurn = o => OACT[o.status]?.includes(ME.role) || (o.status === 'tra_lai' && (o.created_by === ME.id || o.nvkd_id === ME.id || ['ceo', 'ke_toan'].includes(ME.role)));
+const dlr = id => D.dealers?.find(d => d.id === id);
+const prod = sku => D.products?.find(p => p.sku === sku);
+const ckLimit = loai => { const p = (D.policy_periods || []).find(x => x.active); return +((D.ck_levels || []).find(c => c.period_id === p?.id && c.loai_dai_ly === loai)?.ck_max_pct || 0); };
+let DEBT = {};
+const opsRole = () => ['ceo', 'ke_toan', 'to_truong'].includes(ME?.role);
+async function loadDebt() { const { data } = await SB.from('v_dealer_debt').select('*'); DEBT = Object.fromEntries((data || []).map(r => [r.dealer_id, r])); }
+let oState = { tab: 'todo', q: '' };
+V.orders = async () => {
+  const [{ data, error }] = await Promise.all([SB.from('orders').select('*, order_lines(qty,gia)').order('created_at', { ascending: false }).limit(500), loadDebt(), opsRole() ? loadLots() : null]);
+  if (error) throw error;
+  const all = (data || []).map(o => ({ ...o, tien: (o.order_lines || []).reduce((a, l) => a + l.qty * l.gia, 0) * (1 - (+o.ck_pct || 0) / 100) }));
+  const st = oState, groups = { todo: all.filter(myTurn), dang: all.filter(o => !['hoan_tat', 'huy'].includes(o.status)), xong: all.filter(o => o.status === 'hoan_tat'), huy: all.filter(o => o.status === 'huy'), all };
+  let rs = groups[st.tab] || all;
+  if (st.q) { const q = noAcc(st.q); rs = rs.filter(o => noAcc([o.id, dlr(o.dealer_id)?.ten, userName(o.nvkd_id), o.khuyen_mai].join(' ')).includes(q)); }
+  $('#view').innerHTML = `<div class="row between" style="margin-bottom:10px"><div class="row"><input id="oq" placeholder="Tìm số đơn, đại lý, NVKD…" value="${esc(st.q)}" style="min-width:220px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-height:42px">
+   <div class="chips">${[['todo', 'Cần tôi xử lý'], ['dang', 'Đang xử lý'], ['xong', 'Hoàn tất'], ['huy', 'Đã hủy'], ['all', 'Tất cả']].map(([k, t]) => `<span class="chip ${st.tab === k ? 'on' : ''}" data-ot="${k}">${t} ${groups[k].length}</span>`).join('')}</div></div>
+   ${can('orders', 'T') ? '<button class="btn pri" id="onew">+ Lên đơn mới</button>' : ''}</div>
+  <div class="scroll"><table class="stack"><thead><tr><th>Số đơn</th><th>Ngày</th><th>Đại lý</th><th>NVKD</th><th class="n">Giá trị</th><th>Trạng thái</th></tr></thead><tbody>
+  ${rs.map(o => `<tr class="click" data-oid="${esc(o.id)}"><td data-l="Số đơn"><b>${esc(o.id)}</b><br><span class="note">${esc(o.nguon || '')}</span></td><td data-l="Ngày">${ftime(o.created_at)}</td><td data-l="Đại lý">${esc(dlr(o.dealer_id)?.ten || o.dealer_id)}</td><td data-l="NVKD">${esc(userName(o.nvkd_id))}</td><td class="n" data-l="Giá trị">${vnd(o.tien)}</td><td><span class="pill ${OST[o.status]?.[1]}">${OST[o.status]?.[0] || o.status}</span>${o.vi_pham?.length ? ' <span class="pill p-bad">⚠ ' + o.vi_pham.length + '</span>' : ''}</td></tr>`).join('') || `<tr><td colspan="6" class="note">${st.tab === 'todo' ? 'Không có đơn nào chờ bạn xử lý.' : 'Chưa có đơn.'}</td></tr>`}
+  </tbody></table></div><p class="note">${rs.length} đơn. Luồng: NVKD lên đơn → GSV duyệt → Kế toán duyệt cuối (vượt chính sách thì lên CEO) → đủ tồn thì xếp xe, thiếu thì tạo lệnh sản xuất → xuất kho → giao → ghi công nợ.</p>`;
+  $$('[data-ot]').forEach(b => b.onclick = () => { st.tab = b.dataset.ot; V.orders(); });
+  const q = $('#oq'); q.onchange = () => { st.q = q.value; V.orders(); };
+  $('#onew') && ($('#onew').onclick = () => orderForm());
+  $$('[data-oid]').forEach(tr => tr.onclick = () => orderOpen(tr.dataset.oid));
+};
+let OF = null;
+function dealerCard(id) {
+  const d = dlr(id); if (!d) return '';
+  const db = DEBT[id] || {}, nv = userName(d.nvkd_id), lim = +d.han_muc || 0;
+  return `<div class="card" style="margin-top:6px;padding:10px 12px;font-size:14px">${d.dia_chi ? `<div><b>Địa chỉ:</b> ${esc(d.dia_chi)}</div>` : ''}<div>${d.sdt ? `<b>Điện thoại:</b> ${esc(d.sdt)}` : '<span class="note">Chưa có SĐT</span>'}${d.mst ? ` · <b>MST:</b> ${esc(d.mst)}` : ''}</div>
+  <div><b>Loại:</b> ${esc(d.loai)}${nv ? ` · <b>NVKD:</b> ${esc(nv)}` : ''} · <b>CK tối đa:</b> ${ckLimit(d.loai)}%</div>
+  <div><b>Dư nợ:</b> ${vnd(db.du_no)} / hạn mức ${vnd(lim)}${+db.qua_han_ngay > 0 ? ` · <span class="bad">quá hạn ${db.qua_han_ngay} ngày (${vnd(db.qua_han_tien)})</span>` : ''}</div></div>`;
+}
+function orderForm(edit) {
+  const dls = (D.dealers || []).filter(d => d.active !== false);
+  if (ME.role === 'dai_ly') OF = edit || { dealer: ME.dealer_id, lines: [{ sku: '', q: '', gia: '' }], ck: null, km: '' };
+  else OF = edit || { dealer: '', lines: [{ sku: '', q: '', gia: '' }], ck: null, km: '' };
+  if (!OF.oid) OF.oid = crypto.randomUUID?.() || null;
+  oRender(dls);
+}
+function oCalc() {
+  const d = dlr(OF.dealer), L = OF.lines.filter(l => l.sku && +l.q > 0), hang = L.reduce((a, l) => a + l.q * l.gia, 0), lim = d ? ckLimit(d.loai) : 0;
+  const ck = OF.ck == null || OF.ck === '' ? lim : +OF.ck, tt = hang * (1 - ck / 100), db = DEBT[OF.dealer] || {}, v = [];
+  if (d) {
+    if (ck > lim) v.push(`Chiết khấu ${ck}% vượt mức ${lim}% của ${d.loai}`);
+    L.forEach(l => { const p = prod(l.sku); if (p && l.gia < +p.gia_ban) v.push(`Giá riêng ${p.ten}: ${vnd(l.gia)} thấp hơn giá chung ${vnd(p.gia_ban)}`); });
+    if ((+db.du_no || 0) + tt > (+d.han_muc || 0)) v.push(`Dư nợ sau đơn ${vnd((+db.du_no || 0) + tt)} vượt hạn mức ${vnd(d.han_muc)}`);
+    if (+db.qua_han_ngay > (+d.khoa_qua_han_ngay || 0)) v.push(`Nợ quá hạn ${db.qua_han_ngay} ngày (khóa khi > ${d.khoa_qua_han_ngay} ngày)`);
+  }
+  return { L, hang, ck, lim, tt, v };
+}
+function oRender(dls) {
+  const d = dlr(OF.dealer), c = oCalc(), canPick = ME.role !== 'dai_ly';
+  openSheet(`<div class="row between"><h2>${OF.id ? 'Sửa đơn ' + esc(OF.id) : 'Lên đơn mới'}</h2><button class="btn sm" id="close">Đóng</button></div>
+  <div class="field"><label for="of-d">Đại lý / khách hàng *</label>${canPick ? `<input id="of-d" list="of-dl" value="${esc(d?.ten || '')}" placeholder="Gõ tên hoặc mã đại lý…" autocomplete="off" ${OF.id ? 'disabled' : ''}><datalist id="of-dl">${dls.map(x => `<option value="${esc(x.ten)}">${esc(x.id)} · ${esc(x.vung || '')}</option>`).join('')}</datalist>` : `<div class="pwbox" style="font-size:16px">${esc(d?.ten || '')}</div>`}<div id="of-info">${dealerCard(OF.dealer)}</div></div>
+  <div id="of-lines">${OF.lines.map((l, i) => { const p = prod(l.sku), low = p && l.gia !== '' && +l.gia < +p.gia_ban;
+    return `<div class="vline"><div class="vhead"><span class="vno">${i + 1}</span><div class="vitem"><input class="ac" data-oac="${i}" value="${esc(p ? p.ten : '')}" placeholder="Gõ tên hoặc mã sản phẩm…" autocomplete="off"><div class="acl" id="oacl-${i}"></div>${p ? `<div class="note">${esc(p.sku)} · ${esc(p.quy_cach)} · giá chung ${vnd(p.gia_ban)}${LOTS && opsRole() ? ' · tồn ' + num(ton(p.sku)) + ' ' + esc(p.dvt) : ''}</div>` : ''}</div><button class="btn sm" data-odel="${i}" aria-label="Xóa dòng">✕</button></div>
+    <div class="vgrid"><label>Số lượng${p ? ' (' + esc(p.dvt) + ')' : ''}<input type="number" inputmode="decimal" step="any" data-ol="${i}|q" value="${l.q}"></label><label>Đơn giá${low ? ' – giá riêng' : ''}<input type="number" inputmode="numeric" step="any" data-ol="${i}|gia" value="${l.gia}" style="${low ? 'border-color:var(--amber)' : ''}"></label><label>Thành tiền<span class="vtt" id="ott-${i}">${l.q && l.gia ? vnd(l.q * l.gia) : '—'}</span></label></div></div>`; }).join('')}</div>
+  <button class="btn sm" id="of-add" style="margin-top:6px">+ Thêm sản phẩm</button>
+  <div class="f2" style="margin-top:10px"><div class="field"><label for="of-ck">Chiết khấu (%) – mặc định mức tối đa</label><input id="of-ck" type="number" inputmode="decimal" step="any" value="${OF.ck == null ? '' : OF.ck}" placeholder="${c.lim}"></div>
+  <div class="field"><label for="of-km">Khuyến mãi / ghi chú</label><input id="of-km" value="${esc(OF.km || '')}"></div></div>
+  <div class="card" id="of-sum"></div>
+  <div class="err bad" id="of-err" style="min-height:20px;margin-top:6px"></div>
+  <button class="btn pri" id="of-go">${OF.id ? 'Gửi lại đơn' : ME.role === 'dai_ly' ? 'Gửi đơn' : 'Gửi GSV duyệt'}</button>`, true);
+  oSum(); oBind(dls);
+}
+function oSum() {
+  const c = oCalc();
+  $('#of-sum').innerHTML = `<div class="row between"><span>${c.L.length} sản phẩm · tiền hàng ${vnd(c.hang)} · CK ${c.ck}%</span><b style="font-size:18px">Thanh toán: ${vnd(c.tt)}</b></div>${c.v.length ? `<div style="margin-top:8px">${c.v.map(x => `<div class="alert"><span class="bad">⚠</span><span>${esc(x)}</span></div>`).join('')}<p class="note" style="margin:6px 0 0">Đơn vẫn gửi được; khi Kế toán duyệt, các điểm vượt chính sách sẽ tự chuyển CEO quyết.</p></div>` : ''}`;
+  OF.lines.forEach((l, i) => { const t = $('#ott-' + i); if (t) t.textContent = l.q && l.gia ? vnd(l.q * l.gia) : '—'; });
+}
+function oBind(dls) {
+  const di = $('#of-d');
+  if (di) di.oninput = di.onchange = () => { const v = di.value.trim(), x = dls.find(z => z.ten === v || z.id === v); OF.dealer = x?.id || ''; $('#of-info').innerHTML = x ? dealerCard(x.id) : (v ? '<div class="note bad">Chưa khớp – chọn trong danh sách gợi ý</div>' : ''); oSum(); };
+  $('#of-ck').oninput = () => { OF.ck = $('#of-ck').value === '' ? null : +$('#of-ck').value; oSum(); };
+  $('#of-km').oninput = () => OF.km = $('#of-km').value;
+  $('#of-add').onclick = () => { OF.lines.push({ sku: '', q: '', gia: '' }); oRender(dls); $$('#sheet [data-oac]').at(-1)?.focus(); };
+  $$('#sheet [data-odel]').forEach(b => b.onclick = () => { OF.lines.splice(+b.dataset.odel, 1); if (!OF.lines.length) OF.lines.push({ sku: '', q: '', gia: '' }); oRender(dls); });
+  $$('#sheet [data-ol]').forEach(el => el.oninput = () => { const [i, k] = el.dataset.ol.split('|'); OF.lines[+i][k] = el.value === '' ? '' : +el.value; if (k === 'gia') { const p = prod(OF.lines[+i].sku); el.style.borderColor = p && +el.value < +p.gia_ban ? 'var(--amber)' : ''; } oSum(); });
+  $$('#sheet [data-oac]').forEach(inp => { const i = +inp.dataset.oac;
+    acBox(inp, $('#oacl-' + i), () => (D.products || []).filter(p => p.active !== false).map(p => ({ ...p, s: p.sku + ' ' + p.ten + ' ' + (p.quy_cach || '') })), p => `<b>${esc(p.ten)}</b><span>${esc(p.sku)} · ${esc(p.quy_cach)} · ${vnd(p.gia_ban)}${LOTS && opsRole() ? ' · tồn ' + num(ton(p.sku)) : ''}</span>`, p => { const l = OF.lines[i]; l.sku = p.sku; l.gia = +p.gia_ban; oRender(dls); $(`#sheet [data-ol="${i}|q"]`)?.focus(); }); });
+  $('#of-go').onclick = async () => {
+    const e = t => $('#of-err').textContent = t, c = oCalc();
+    if (!OF.dealer) return e('Chọn đại lý từ danh sách');
+    if (OF.lines.some(l => l.sku && !(+l.q > 0))) return e('Nhập số lượng cho từng sản phẩm');
+    if (!c.L.length) return e('Đơn chưa có sản phẩm');
+    const lines = c.L.map(l => ({ sku: l.sku, qty: +l.q, gia: +l.gia })), ck = OF.ck == null ? null : +OF.ck;
+    $('#of-go').disabled = true;
+    const r = OF.id ? await SB.rpc('resubmit_order', { p_order: OF.id, p_lines: lines, p_ck: ck, p_km: OF.km || null })
+      : await SB.rpc('create_order', { p_dealer: OF.dealer, p_lines: lines, p_ck: ck, p_km: OF.km || null, p_offline_id: OF.oid });
+    if (r.error) { $('#of-go').disabled = false; return e(errMsg(r.error)); }
+    const id = OF.id || r.data; OF = null; closeSheet(); toast(`${id}: đã gửi`); route();
+  };
+}
+async function orderOpen(id) {
+  const [{ data: o }, { data: L }, { data: EV }] = await Promise.all([
+    SB.from('orders').select('*').eq('id', id).single(), SB.from('order_lines').select('*').eq('order_id', id), SB.from('order_events').select('*').eq('order_id', id).order('ts')]);
+  if (!o) return toast('Không mở được đơn');
+  if (!Object.keys(DEBT).length) await loadDebt();
+  const hang = (L || []).reduce((a, l) => a + l.qty * l.gia, 0), tt = hang * (1 - (+o.ck_pct || 0) / 100), d = dlr(o.dealer_id);
+  const fi = OFLOW.findIndex(f => f[0] === o.status), s = OST[o.status] || [o.status, ''];
+  let act = '';
+  if (myTurn(o)) {
+    if (o.status === 'cho_gsv') act = `<button class="btn pri" data-a="gsv">Duyệt đơn</button><button class="btn" data-a="ret">Trả lại NVKD</button>`;
+    if (o.status === 'cho_kt') act = `<button class="btn pri" data-a="kt">Duyệt cuối</button><button class="btn" data-a="ret">Trả lại</button>`;
+    if (o.status === 'cho_ceo') act = `<button class="btn pri" data-a="ceo1">Duyệt ngoại lệ</button><button class="btn bad" data-a="ceo0">Từ chối</button>`;
+    if (o.status === 'cho_xuat') act = `<button class="btn pri" data-a="trip">Xếp xe</button>`;
+    if (o.status === 'xep_xe') act = `<button class="btn pri" data-a="ship">Xuất kho (FIFO)</button>`;
+    if (o.status === 'da_xuat') act = `<button class="btn pri" data-a="deliv">Xác nhận đã giao</button>`;
+    if (o.status === 'da_giao') act = `<button class="btn pri" data-a="inv">Ghi hóa đơn & công nợ</button>`;
+    if (o.status === 'tra_lai') act = `<button class="btn pri" data-a="edit">Sửa và gửi lại</button>`;
+  }
+  const canCancel = ['cho_gsv', 'cho_kt', 'cho_ceo', 'tra_lai', 'cho_sx', 'cho_xuat'].includes(o.status) && (['ceo', 'ke_toan'].includes(ME.role) || ((o.created_by === ME.id || o.nvkd_id === ME.id) && ['cho_gsv', 'tra_lai'].includes(o.status)));
+  openSheet(`<div class="row between"><h2>${esc(o.id)}</h2><button class="btn sm" id="close">Đóng</button></div>
+  <div><span class="pill ${s[1]}">${s[0]}</span> <span class="note">· ${esc(o.nguon || '')} · ${ftime(o.created_at)} · lập bởi ${esc(userName(o.created_by))}</span></div>
+  ${!['huy', 'tra_lai'].includes(o.status) ? `<div class="steps">${OFLOW.map((f, i) => `<span class="${i < fi || o.status === 'hoan_tat' ? 'done' : i === fi ? 'cur' : ''}">${f[1]}</span>`).join('')}</div>` : ''}
+  <div class="card" style="margin:10px 0"><b>${esc(d?.ten || o.dealer_id)}</b> <span class="note">${esc(o.dealer_id)}</span>${dealerCard(o.dealer_id).replace('class="card"', 'class=""')}</div>
+  ${o.vi_pham?.length ? `<div class="card" style="border-left:4px solid var(--coral)"><b class="bad">Vượt chính sách – cần CEO quyết</b>${o.vi_pham.map(x => `<div class="alert"><span class="bad">⚠</span><span>${esc(x)}</span></div>`).join('')}</div>` : ''}
+  <div class="scroll"><table><thead><tr><th>Sản phẩm</th><th class="n">SL</th><th class="n">Đơn giá</th><th class="n">Thành tiền</th></tr></thead><tbody>
+  ${(L || []).map(l => { const p = prod(l.sku); return `<tr><td>${esc(p?.ten || l.sku)}<br><span class="note">${esc(l.sku)}</span></td><td class="n">${num(l.qty, 2)} ${esc(p?.dvt || '')}</td><td class="n">${vnd(l.gia)}${+l.gia < +l.gia_chung ? `<br><span class="note bad">giá chung ${vnd(l.gia_chung)}</span>` : ''}</td><td class="n">${vnd(l.qty * l.gia)}</td></tr>`; }).join('')}
+  <tr><td colspan="3">Tiền hàng</td><td class="n">${vnd(hang)}</td></tr><tr><td colspan="3">Chiết khấu ${num(o.ck_pct, 2)}%</td><td class="n">−${vnd(hang - tt)}</td></tr><tr><td colspan="3"><b>Thanh toán</b></td><td class="n"><b>${vnd(tt)}</b></td></tr></tbody></table></div>
+  ${o.khuyen_mai ? `<p><b>Khuyến mãi / ghi chú:</b> ${esc(o.khuyen_mai)}</p>` : ''}
+  <div id="o-extra"></div><div class="err bad" id="o-err" style="min-height:20px"></div>
+  <div class="row">${act}${canCancel ? '<button class="btn" data-a="cancel">Hủy đơn</button>' : ''}</div>
+  <h3 style="margin:18px 0 6px;font-size:15px">Lịch sử xử lý</h3>${(EV || []).map(ev => `<div class="alert"><span class="note" style="min-width:92px">${ftime(ev.ts)}</span><span><b>${esc(ev.action)}</b> · ${esc(userName(ev.user_id))}${ev.ghi_chu ? `<br><span class="note">${esc(ev.ghi_chu)}</span>` : ''}</span></div>`).join('')}`, true);
+  const e = t => $('#o-err').textContent = t, done = msg => { closeSheet(); toast(msg); LOTS = null; route(); };
+  const ask = (lbl, ph, go, extra = '') => { $('#o-extra').innerHTML = `<div class="card"><div class="field"><label for="o-in">${lbl}</label><input id="o-in" placeholder="${esc(ph)}"></div>${extra}<button class="btn pri" id="o-ok">Xác nhận</button></div>`; $('#o-in').focus(); $('#o-ok').onclick = () => go($('#o-in').value.trim()); };
+  const call = async (fn, args, msg) => { const { data, error } = await SB.rpc(fn, args); if (error) return e(errMsg(error)); done(typeof msg === 'function' ? msg(data) : msg); };
+  $$('#sheet [data-a]').forEach(b => b.onclick = async () => {
+    const a = b.dataset.a; e('');
+    if (a === 'gsv') return call('gsv_approve', { p_order: id }, 'GSV đã duyệt, chuyển Kế toán');
+    if (a === 'kt') return call('kt_approve', { p_order: id }, st => st === 'cho_ceo' ? 'Vượt chính sách → đã chuyển CEO' : st === 'cho_sx' ? 'Thiếu tồn → đã tạo lệnh sản xuất' : 'Đã duyệt, chờ xếp xe');
+    if (a === 'ceo1') return ask('Ghi chú của CEO (không bắt buộc)', 'vd: đồng ý CK đặc biệt vụ Đông Xuân', v => call('ceo_decide', { p_order: id, p_approve: true, p_note: v || null }, 'CEO đã duyệt ngoại lệ'));
+    if (a === 'ceo0') return ask('Lý do từ chối', '', v => v ? call('ceo_decide', { p_order: id, p_approve: false, p_note: v }, 'Đã từ chối đơn') : e('Nhập lý do'));
+    if (a === 'ret') return ask('Lý do trả lại', 'vd: sai số lượng, sai giá', v => v ? call('return_order', { p_order: id, p_note: v }, 'Đã trả lại đơn') : e('Nhập lý do'));
+    if (a === 'cancel') return ask('Lý do hủy đơn', '', v => v ? call('cancel_order', { p_order: id, p_note: v }, 'Đã hủy đơn') : e('Nhập lý do'));
+    if (a === 'inv') return ask('Số hóa đơn', 'vd: 0001234', v => v ? call('invoice_order', { p_order: id, p_so_hd: v }, 'Đã ghi hóa đơn và công nợ') : e('Nhập số hóa đơn'));
+    if (a === 'deliv') return ask('Số biên bản giao / ghi chú', 'vd: BBGN đã ký, đủ hàng', v => call('confirm_delivery', { p_order: id, p_anh: v || null }, 'Đã xác nhận giao hàng'));
+    if (a === 'ship') { b.disabled = true; return call('ship_order', { p_order: id }, 'Đã xuất kho, phiếu xuất tự sinh'); }
+    if (a === 'edit') { return orderForm({ id, dealer: o.dealer_id, ck: +o.ck_pct, km: o.khuyen_mai || '', lines: (L || []).map(l => ({ sku: l.sku, q: +l.qty, gia: +l.gia })) }); }
+    if (a === 'trip') {
+      const { data: T } = await SB.from('trips').select('*').eq('status', 'Chờ xuất kho').order('id', { ascending: false });
+      const cs = (D.carriers || []).filter(c => c.active !== false);
+      $('#o-extra').innerHTML = `<div class="card"><div class="field"><label for="t-old">Ghép vào chuyến có sẵn</label><select id="t-old"><option value="">— Tạo chuyến mới —</option>${(T || []).map(t => `<option value="${esc(t.id)}">${esc(t.id)} · ${esc(t.bien_so || '')} · ${fdate(t.ngay)}</option>`).join('')}</select></div>
+       <div id="t-new" class="f2"><div class="field"><label for="t-c">Nhà xe</label><select id="t-c"><option value="">—</option>${cs.map(c => `<option value="${c.id}">${esc(c.ten)}${c.tuyen ? ' · ' + esc(c.tuyen) : ''}</option>`).join('')}</select></div>
+       <div class="field"><label for="t-bs">Biển số xe</label><input id="t-bs" placeholder="vd: 65C-301.88"></div><div class="field"><label for="t-tt">Tải trọng</label><input id="t-tt" placeholder="vd: 8 tấn"></div><div class="field"><label for="t-cu">Cước (đ)</label><input id="t-cu" type="number" inputmode="numeric"></div></div>
+       <button class="btn pri" id="t-go">Xếp xe</button></div>`;
+      $('#t-c').onchange = () => { const c = cs.find(x => String(x.id) === $('#t-c').value); if (c) { $('#t-tt').value ||= c.tai_trong || ''; } };
+      $('#t-old').onchange = () => $('#t-new').hidden = !!$('#t-old').value;
+      $('#t-go').onclick = () => { const old = $('#t-old').value; if (!old && !$('#t-bs').value.trim()) return e('Nhập biển số xe hoặc chọn chuyến có sẵn');
+        call('assign_trip', { p_order: id, p_carrier: old ? null : ($('#t-c').value ? +$('#t-c').value : null), p_bien_so: $('#t-bs').value.trim() || null, p_tai: $('#t-tt').value.trim() || null, p_cuoc: +$('#t-cu').value || 0, p_trip: old || null }, t => 'Đã xếp vào chuyến ' + t); };
+    }
+  });
+}
+
+// ---------- ĐẠI LÝ & CÔNG NỢ ----------
+let dState = { q: '', f: 'all' };
+V.dealers = async () => {
+  await loadDebt(); const st = dState;
+  let rs = (D.dealers || []).map(d => ({ ...d, db: DEBT[d.id] || {} }));
+  if (st.f === 'no') rs = rs.filter(d => +d.db.du_no > 0); if (st.f === 'qh') rs = rs.filter(d => +d.db.qua_han_ngay > 0);
+  if (st.q) { const q = noAcc(st.q); rs = rs.filter(d => noAcc(d.id + ' ' + d.ten + ' ' + (d.sdt || '') + ' ' + (d.vung || '')).includes(q)); }
+  rs.sort((a, b) => (+b.db.du_no || 0) - (+a.db.du_no || 0));
+  const tot = rs.reduce((a, d) => a + (+d.db.du_no || 0), 0), qh = rs.reduce((a, d) => a + (+d.db.qua_han_tien || 0), 0);
+  $('#view').innerHTML = `<div class="grid g3" style="margin-bottom:14px"><div class="card"><div class="note">Tổng dư nợ</div><div style="font-size:22px;font-weight:700">${vnd(tot)}</div></div><div class="card"><div class="note">Nợ quá hạn</div><div style="font-size:22px;font-weight:700" class="${qh ? 'bad' : ''}">${vnd(qh)}</div></div><div class="card"><div class="note">Số đại lý</div><div style="font-size:22px;font-weight:700">${rs.length}</div></div></div>
+  <div class="row" style="margin-bottom:10px"><input id="dq" placeholder="Tìm đại lý…" value="${esc(st.q)}" style="min-width:220px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-height:42px"><div class="chips">${[['all', 'Tất cả'], ['no', 'Đang nợ'], ['qh', 'Quá hạn']].map(([k, t]) => `<span class="chip ${st.f === k ? 'on' : ''}" data-df="${k}">${t}</span>`).join('')}</div></div>
+  <div class="scroll"><table class="stack"><thead><tr><th>Đại lý</th><th>Vùng</th><th>NVKD</th><th class="n">Dư nợ</th><th class="n">Hạn mức</th><th>Quá hạn</th></tr></thead><tbody>
+  ${rs.map(d => `<tr class="click" data-did="${esc(d.id)}"><td data-l="Đại lý"><b>${esc(d.ten)}</b><br><span class="note">${esc(d.id)} · ${esc(d.sdt || '')}</span></td><td data-l="Vùng">${esc(d.vung || '')}</td><td data-l="NVKD">${esc(userName(d.nvkd_id))}</td><td class="n" data-l="Dư nợ">${vnd(d.db.du_no)}</td><td class="n" data-l="Hạn mức">${vnd(d.han_muc)}${+d.han_muc && +d.db.du_no > +d.han_muc ? '<br><span class="pill p-bad">vượt</span>' : ''}</td><td data-l="Quá hạn">${+d.db.qua_han_ngay > 0 ? `<span class="pill p-bad">${d.db.qua_han_ngay} ngày · ${vnd(d.db.qua_han_tien)}</span>` : ''}</td></tr>`).join('') || '<tr><td colspan="6" class="note">Không có đại lý.</td></tr>'}</tbody></table></div>`;
+  $$('[data-df]').forEach(b => b.onclick = () => { st.f = b.dataset.df; V.dealers(); });
+  const q = $('#dq'); q.onchange = () => { st.q = q.value; V.dealers(); };
+  $$('[data-did]').forEach(tr => tr.onclick = () => dealerOpen(tr.dataset.did));
+};
+async function dealerOpen(id) {
+  const d = dlr(id); const [{ data: inv }, { data: rc }, { data: od }] = await Promise.all([
+    SB.from('invoices').select('*').eq('dealer_id', id).order('ngay', { ascending: false }).limit(100), SB.from('receipts').select('*').eq('dealer_id', id).order('ngay', { ascending: false }).limit(100),
+    SB.from('orders').select('id,status,created_at').eq('dealer_id', id).order('created_at', { ascending: false }).limit(20)]);
+  const kt = ['ceo', 'ke_toan'].includes(ME.role);
+  openSheet(`<div class="row between"><h2>${esc(d.ten)}</h2><button class="btn sm" id="close">Đóng</button></div>${dealerCard(id)}
+  ${kt ? `<div class="card" style="margin-top:10px"><b>Ghi nhận thu tiền</b><div class="f2" style="margin-top:6px"><div class="field"><label for="r-t">Số tiền (đ)</label><input id="r-t" type="number" inputmode="numeric"></div><div class="field"><label for="r-n">Ghi chú</label><input id="r-n" placeholder="vd: CK Vietcombank 22/11"></div></div><div class="err bad" id="r-e"></div><button class="btn pri" id="r-go">Ghi thu – trừ nợ hóa đơn cũ trước</button></div>` : ''}
+  <h3 style="margin:16px 0 6px;font-size:15px">Hóa đơn / công nợ</h3><div class="scroll"><table><thead><tr><th>Số HĐ</th><th>Đơn</th><th>Ngày</th><th>Hạn TT</th><th class="n">Số tiền</th><th class="n">Còn nợ</th></tr></thead><tbody>${(inv || []).map(i => `<tr><td>${esc(i.id)}</td><td>${esc(i.order_id || '')}</td><td>${fdate(i.ngay)}</td><td class="${i.han_tt < today() && i.so_tien > i.da_thu ? 'bad' : ''}">${fdate(i.han_tt)}</td><td class="n">${vnd(i.so_tien)}</td><td class="n">${vnd(i.so_tien - i.da_thu)}</td></tr>`).join('') || '<tr><td colspan="6" class="note">Chưa có hóa đơn.</td></tr>'}</tbody></table></div>
+  <h3 style="margin:16px 0 6px;font-size:15px">Thu tiền</h3><div class="scroll"><table><tbody>${(rc || []).map(r => `<tr><td>${fdate(r.ngay)}</td><td>${esc(r.ghi_chu || '')}</td><td class="n">${vnd(r.so_tien)}</td></tr>`).join('') || '<tr><td class="note">Chưa có.</td></tr>'}</tbody></table></div>
+  <h3 style="margin:16px 0 6px;font-size:15px">Đơn gần đây</h3>${(od || []).map(o => `<div class="alert"><span>${esc(o.id)}</span><span class="note">${ftime(o.created_at)}</span><span class="pill ${OST[o.status]?.[1]}">${OST[o.status]?.[0]}</span></div>`).join('') || '<p class="note">Chưa có đơn.</p>'}`, true);
+  $('#r-go') && ($('#r-go').onclick = async () => { const t = +$('#r-t').value; if (!(t > 0)) return $('#r-e').textContent = 'Nhập số tiền'; const { error } = await SB.rpc('record_receipt', { p_dealer: id, p_amount: t, p_note: $('#r-n').value.trim() || null }); if (error) return $('#r-e').textContent = errMsg(error); closeSheet(); toast('Đã ghi thu ' + vnd(t)); V.dealers(); });
+}
+
+// ---------- CHÍNH SÁCH CHIẾT KHẤU ----------
+V.policy = async () => {
+  await loadMaster(['policy_periods', 'ck_levels']);
+  const P = [...D.policy_periods].sort((a, b) => String(b.tu_ngay).localeCompare(String(a.tu_ngay))), ed = can('policy', 'S') || can('policy', 'T');
+  $('#view').innerHTML = `<div class="row between" style="margin-bottom:10px"><p class="note" style="margin:0">Mức chiết khấu tối đa theo loại đại lý, áp dụng cho kỳ chính sách đang hiệu lực. Đơn có CK cao hơn hoặc giá thấp hơn giá chung sẽ tự chuyển CEO duyệt.</p>${ed ? '<button class="btn pri" id="pnew">+ Kỳ chính sách mới</button>' : ''}</div>
+  ${P.map(p => `<div class="card" style="margin-bottom:12px"><div class="row between"><div><b>${esc(p.ten)}</b> <span class="note">${fdate(p.tu_ngay)} – ${fdate(p.den_ngay)}</span> ${p.active ? '<span class="pill p-ok">Đang áp dụng</span>' : ''}</div>${ed && !p.active ? `<button class="btn sm" data-pact="${p.id}">Áp dụng kỳ này</button>` : ''}</div>
+  <table style="margin-top:8px"><thead><tr><th>Loại đại lý</th><th class="n">CK tối đa (%)</th></tr></thead><tbody>${DEALER_TYPES.map(t => { const v = D.ck_levels.find(c => c.period_id === p.id && c.loai_dai_ly === t)?.ck_max_pct; return `<tr><td>${t}</td><td class="n">${ed ? `<input type="number" step="any" inputmode="decimal" data-ck="${p.id}|${t}" value="${v ?? ''}" style="width:90px;text-align:right;border:1px solid var(--line);border-radius:6px;padding:6px">` : v ?? '—'}</td></tr>`; }).join('')}</tbody></table></div>`).join('') || '<div class="ph">Chưa có kỳ chính sách. Chưa có kỳ thì mọi đơn có chiết khấu đều chuyển CEO duyệt.</div>'}`;
+  $$('[data-ck]').forEach(inp => inp.onchange = async () => { const [pid, t] = inp.dataset.ck.split('|'); const v = inp.value === '' ? null : +inp.value;
+    const r = v == null ? await SB.from('ck_levels').delete().eq('period_id', +pid).eq('loai_dai_ly', t) : await SB.from('ck_levels').upsert({ period_id: +pid, loai_dai_ly: t, ck_max_pct: v });
+    if (r.error) return toast(errMsg(r.error)); await loadMaster('ck_levels'); toast('Đã lưu CK ' + t); });
+  $$('[data-pact]').forEach(b => b.onclick = async () => { await SB.from('policy_periods').update({ active: false }).eq('active', true); const { error } = await SB.from('policy_periods').update({ active: true }).eq('id', +b.dataset.pact); if (error) return toast(errMsg(error)); toast('Đã áp dụng kỳ chính sách'); V.policy(); });
+  $('#pnew') && ($('#pnew').onclick = () => {
+    openSheet(`<div class="row between"><h2>Kỳ chính sách mới</h2><button class="btn sm" id="close">Đóng</button></div><div class="field"><label for="p-t">Tên kỳ</label><input id="p-t" placeholder="vd: Vụ Đông Xuân 2026–2027"></div><div class="f2"><div class="field"><label for="p-a">Từ ngày</label><input id="p-a" type="date" value="${today()}"></div><div class="field"><label for="p-b">Đến ngày</label><input id="p-b" type="date"></div></div><div class="err bad" id="p-e"></div><button class="btn pri" id="p-go">Tạo kỳ</button>`);
+    $('#p-go').onclick = async () => { const t = $('#p-t').value.trim(), a = $('#p-a').value, b = $('#p-b').value; if (!t || !a || !b) return $('#p-e').textContent = 'Nhập đủ tên và thời gian'; const { error } = await SB.from('policy_periods').insert({ ten: t, tu_ngay: a, den_ngay: b, active: !D.policy_periods.some(p => p.active) }); if (error) return $('#p-e').textContent = errMsg(error); closeSheet(); toast('Đã tạo kỳ chính sách'); V.policy(); };
+  });
+};
 
 // ---------- khởi động ----------
 (async () => {
