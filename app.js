@@ -3,7 +3,7 @@ const CFG = {
   url: 'https://qfjarxoymmabropgscek.supabase.co',
   key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFmamFyeG95bW1hYnJvcGdzY2VrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTUzMTU1NTgsImV4cCI6MjExMDg5MTU1OH0._ccBX9tTCE_0WxhgkP6hqpmRaTbM3bK5G6L3vExTafo',
   domain: 'erp.quatar.vn',
-  version: '0.2 · 22/11/2026'
+  version: '0.3 · 22/11/2026'
 };
 const SB = window.__SB_MOCK || (await import('https://esm.sh/@supabase/supabase-js@2.45.4')).createClient(CFG.url, CFG.key);
 

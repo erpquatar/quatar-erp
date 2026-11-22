@@ -1,0 +1,17 @@
+{
+  "name": "ERP Quatar",
+  "short_name": "ERP Quatar",
+  "description": "Phần mềm quản trị Quatar Crop Science",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#272f8a",
+  "theme_color": "#272f8a",
+  "lang": "vi",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

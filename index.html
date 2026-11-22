@@ -5,7 +5,13 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#272f8a">
 <title>ERP Quatar</title>
-<link rel="icon" href="logo.png">
+<link rel="icon" href="icon-192.png">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ERP Quatar">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
@@ -44,11 +50,21 @@
  </div>
  <div class="err" id="l-err" role="alert"></div>
  <button class="btn pri" style="width:100%" id="l-go">Đăng nhập</button>
+ <button type="button" class="btn" style="width:100%;margin-top:10px" id="inst" hidden>📲 Cài app lên điện thoại / máy tính</button>
+ <p class="note" id="inst-ios" hidden style="margin:10px 0 0">📲 <b>Cài app trên iPhone:</b> bấm nút Chia sẻ <b>⎋</b> ở thanh dưới Safari → <b>Thêm vào MH chính</b>.</p>
  <p class="note" style="margin:14px 0 0">Tài khoản do Admin cấp, không tự đăng ký. Quên mật khẩu: liên hệ Admin để đặt lại.</p>
 </form></div>
 
 <div class="drawer" id="drawer"><div class="sheet" id="sheet"></div></div>
 <div class="toast" id="toast" role="status"></div>
 <script type="module" src="app.js"></script>
+<script>
+if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('sw.js'));
+(() => { let ev = null; const b = document.getElementById('inst'), standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+  if (!standalone && /iphone|ipad|ipod/i.test(navigator.userAgent)) document.getElementById('inst-ios').hidden = false;
+  addEventListener('beforeinstallprompt', e => { e.preventDefault(); ev = e; b.hidden = false; });
+  b.onclick = async () => { if (!ev) return; ev.prompt(); await ev.userChoice; ev = null; b.hidden = true; };
+  addEventListener('appinstalled', () => { b.hidden = true; }); })();
+</script>
 </body>
 </html>
