@@ -40,8 +40,9 @@ Deno.serve(async (req) => {
     const { data: who, error: whoErr } = await admin.auth.getUser(token);
     if (whoErr || !who?.user) return json({ error: "Chưa đăng nhập" }, 401);
     const callerId = who.user.id;
-    const { data: me } = await admin.from("profiles").select("role,active").eq("id", callerId).maybeSingle();
-    if (!me || me.role !== "ceo" || !me.active) return json({ error: "Chỉ CEO / Admin được quản lý tài khoản" }, 403);
+    const { data: me, error: meErr } = await admin.from("profiles").select("role,active").eq("id", callerId).maybeSingle();
+    if (meErr) { console.error("profiles lookup failed", meErr); return json({ error: "Lỗi máy chủ khi kiểm tra quyền: " + meErr.message }, 500); }
+    if (!me || me.role !== "ceo" || !me.active) { console.error("not ceo", callerId, me); return json({ error: "Chỉ CEO / Admin được quản lý tài khoản" }, 403); }
 
     const body = await req.json();
     const log = (thao_tac: string, khoa: string, moi: unknown) =>
