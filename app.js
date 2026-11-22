@@ -3,7 +3,7 @@ const CFG = {
   url: 'https://qfjarxoymmabropgscek.supabase.co',
   key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFmamFyeG95bW1hYnJvcGdzY2VrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTUzMTU1NTgsImV4cCI6MjExMDg5MTU1OH0._ccBX9tTCE_0WxhgkP6hqpmRaTbM3bK5G6L3vExTafo',
   domain: 'erp.quatar.vn',
-  version: '0.5 · 22/11/2026'
+  version: '0.6 · 22/11/2026'
 };
 const SB = window.__SB_MOCK || (await import('https://esm.sh/@supabase/supabase-js@2.45.4')).createClient(CFG.url, CFG.key);
 
@@ -148,7 +148,7 @@ function route() {
   const h = location.hash.slice(1), vis = visible();
   cur = vis.includes(h) ? h : (HOME_ORDER.find(v => vis.includes(v)) || vis[0] || '');
   if (h !== cur) history.replaceState(null, '', '#' + cur);
-  nav(); $('#title').textContent = VIEWS[cur]?.t || 'ERP';
+  closeSheet(); nav(); $('#title').textContent = VIEWS[cur]?.t || 'ERP';
   const fn = V[cur] || placeholder; $('#view').innerHTML = '';
   Promise.resolve(fn()).catch(e => { $('#view').innerHTML = `<p class="bad">${esc(errMsg(e))}</p>`; });
 }
@@ -939,6 +939,421 @@ function progForm(g) {
   };
   $('#g-del') && ($('#g-del').onclick = async () => { const b = $('#g-del'); if (!b.dataset.ok) { b.dataset.ok = 1; b.textContent = 'Bấm lần nữa để xóa'; return; } const { error } = await SB.from('policy_programs').delete().eq('id', g.id); if (error) return e(errMsg(error)); await loadMaster('policy_programs'); closeSheet(); toast('Đã xóa chương trình'); V.policy(); });
 }
+
+// =====================================================================
+// CÁC PHÂN HỆ CÒN LẠI: Sản xuất – QC, Kho (hàng lỗi, kiểm kê, NXT), Điều hành (chờ CEO, giá thành),
+// Kế toán (mua hàng, giao vận, MISA), Kinh doanh (đi tuyến, KPI), Nhân sự (chấm công)
+// =====================================================================
+const qd = p => Promise.resolve(p).then(r => r.data || [], () => []);
+const itName = c => item(c)?.ten || c, itDvt = c => item(c)?.dvt || '';
+const chipsHtml = (opts, cur, attr) => `<div class="chips">${opts.map(([k, t]) => `<span class="chip ${cur === k ? 'on' : ''}" data-${attr}="${k}">${t}</span>`).join('')}</div>`;
+const searchBox = (id, v, ph) => `<input id="${id}" placeholder="${ph}" value="${esc(v || '')}" style="min-width:200px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-height:42px">`;
+const inputCss = 'border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-height:40px;background:var(--bg)';
+function csvDownload(name, rows) {
+  const s = '﻿' + rows.map(r => r.map(v => { v = v == null ? '' : String(v); return /[",;\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(',')).join('\r\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([s], { type: 'text/csv;charset=utf-8' })); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+}
+
+// ---------- CÔNG THỨC PHỐI TRỘN ----------
+V.bom = async () => {
+  const [F, L] = await Promise.all([qd(SB.from('formulas').select('*').order('sku')), qd(SB.from('formula_lines').select('*'))]);
+  const ed = ME.role === 'ceo';
+  $('#view').innerHTML = `<div class="row between" style="margin-bottom:10px"><p class="note" style="margin:0">Mỗi sản phẩm có thể có nhiều phiên bản công thức; lệnh sản xuất dùng phiên bản mới nhất đang áp dụng. NVL nhập theo kg/mẻ; bao bì nhập số cái/mẻ.</p>${ed ? '<button class="btn pri" id="fnew">+ Công thức mới</button>' : ''}</div>
+  <div class="scroll"><table class="stack"><thead><tr><th>Sản phẩm</th><th>Phiên bản</th><th>Dạng</th><th class="n">Cỡ mẻ (kg)</th><th class="n">Hao hụt</th><th>Thành phần</th><th></th></tr></thead><tbody>
+  ${F.map(f => { const ls = L.filter(l => l.formula_id === f.id); return `<tr class="click ${f.active ? '' : 'off'}" data-fid="${f.id}"><td data-l="Sản phẩm"><b>${esc(prodName(f.sku))}</b><br><span class="note">${esc(f.sku)}</span></td><td data-l="Phiên bản">v${f.version}${f.hieu_luc_tu ? '<br><span class="note">từ ' + fdate(f.hieu_luc_tu) + '</span>' : ''}</td><td data-l="Dạng">${esc(f.dang)}</td><td class="n" data-l="Cỡ mẻ">${num(f.co_me_kg, 2)}</td><td class="n" data-l="Hao hụt">${num(f.hao_hut_pct, 2)}%</td><td data-l="Thành phần">${ls.map(l => `${esc(itName(l.material_ma))} <b>${num(l.kg_moi_me, 3)}</b>`).join(' · ')}</td><td>${f.active ? '<span class="pill p-ok">Đang dùng</span>' : '<span class="pill p-bad">Ngừng</span>'}</td></tr>`; }).join('') || '<tr><td colspan="7" class="note">Chưa có công thức. Đơn hàng thiếu tồn sẽ không tạo được lệnh sản xuất khi sản phẩm chưa có công thức.</td></tr>'}</tbody></table></div>`;
+  $('#fnew') && ($('#fnew').onclick = () => formulaForm(null, [], F));
+  $$('[data-fid]').forEach(tr => tr.onclick = () => { const f = F.find(x => x.id === +tr.dataset.fid); formulaForm(f, L.filter(l => l.formula_id === f.id), F); });
+};
+function formulaForm(f, lines, F) {
+  const ed = ME.role === 'ceo', isNew = !f; f = f || { dang: 'Bột', co_me_kg: 100, hao_hut_pct: 3, active: true, hieu_luc_tu: today() };
+  const st = { sku: f.sku || '', lines: lines.length ? lines.map(l => ({ ...l })) : [{ material_ma: '', kg_moi_me: '' }] };
+  const draw = () => {
+    const nvlKg = st.lines.filter(l => item(l.material_ma)?.kind === 'NVL').reduce((a, l) => a + (+l.kg_moi_me || 0), 0);
+    openSheet(`<div class="row between"><h2>${isNew ? 'Công thức mới' : 'Công thức ' + esc(prodName(f.sku)) + ' v' + f.version}</h2><button class="btn sm" id="close">Đóng</button></div>
+    <div class="f2"><div class="field full"><label for="fm-sku">Sản phẩm *</label><div class="vitem"><input class="ac" id="fm-sku" value="${esc(st.sku ? prodName(st.sku) : '')}" ${isNew && ed ? '' : 'disabled'} placeholder="Gõ tên hoặc mã thành phẩm…" autocomplete="off"><div class="acl" id="fm-skul"></div></div></div>
+    <div class="field"><label for="fm-dang">Dạng</label><select id="fm-dang" ${ed ? '' : 'disabled'}>${['Bột', 'Hạt', 'Lỏng', 'Viên'].map(x => `<option ${x === f.dang ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+    <div class="field"><label for="fm-me">Cỡ mẻ (kg) *</label><input id="fm-me" type="number" step="any" value="${f.co_me_kg ?? ''}" ${ed ? '' : 'disabled'}></div>
+    <div class="field"><label for="fm-hh">Hao hụt định mức (%)</label><input id="fm-hh" type="number" step="any" value="${f.hao_hut_pct ?? ''}" ${ed ? '' : 'disabled'}></div>
+    <div class="field"><label for="fm-tt">Tỷ trọng (dạng lỏng)</label><input id="fm-tt" type="number" step="any" value="${f.ty_trong ?? ''}" ${ed ? '' : 'disabled'}></div>
+    <div class="field"><label for="fm-hl">Hiệu lực từ</label><input id="fm-hl" type="date" value="${f.hieu_luc_tu || ''}" ${ed ? '' : 'disabled'}></div>
+    <div class="field full"><label for="fm-rt">Quy trình (các bước trộn)</label><input id="fm-rt" value="${esc(f.routing || '')}" ${ed ? '' : 'disabled'} placeholder="vd: Cân → Trộn 15 phút → Đóng gói"></div></div>
+    <h3 style="font-size:15px;margin:10px 0 6px">Thành phần cho 1 mẻ</h3>
+    ${st.lines.map((l, i) => `<div class="vline"><div class="vhead"><span class="vno">${i + 1}</span><div class="vitem"><input class="ac" data-fl="${i}" value="${esc(l.material_ma ? itName(l.material_ma) : '')}" ${ed ? '' : 'disabled'} placeholder="Gõ tên NVL / bao bì…" autocomplete="off"><div class="acl" id="fll-${i}"></div>${l.material_ma ? `<div class="note">${esc(l.material_ma)} · ${esc(item(l.material_ma)?.kind || '')} · ${esc(itDvt(l.material_ma))}</div>` : ''}</div>${ed ? `<button class="btn sm" data-fdel="${i}">✕</button>` : ''}</div>
+     <div class="vgrid"><label>${item(l.material_ma)?.kind === 'Bao bì' ? 'Số cái / mẻ' : 'Kg / mẻ'}<input type="number" step="any" data-fk="${i}|kg_moi_me" value="${l.kg_moi_me ?? ''}" ${ed ? '' : 'disabled'}></label><label>Mã thay thế (nếu có)<input data-fk="${i}|thay_the_ma" value="${esc(l.thay_the_ma || '')}" ${ed ? '' : 'disabled'}></label><label>Hệ số thay thế<input type="number" step="any" data-fk="${i}|he_so_thay_the" value="${l.he_so_thay_the ?? ''}" ${ed ? '' : 'disabled'}></label></div></div>`).join('')}
+    ${ed ? '<button class="btn sm" id="fm-add">+ Thêm thành phần</button>' : ''}
+    <div class="card" style="margin-top:10px">Tổng NVL: <b>${num(nvlKg, 3)} kg</b> / cỡ mẻ ${num($('#fm-me')?.value || f.co_me_kg, 2)} kg ${Math.abs(nvlKg - (+f.co_me_kg || 0)) > 0.01 && nvlKg ? '<span class="bad">· chưa khớp cỡ mẻ</span>' : ''}</div>
+    ${!isNew && ed ? `<label class="chk"><input type="checkbox" id="fm-act" ${f.active ? 'checked' : ''}> Đang áp dụng</label>` : ''}
+    <div class="err bad" id="fm-e" style="min-height:20px"></div>${ed ? `<div class="row"><button class="btn pri" id="fm-go">${isNew ? 'Lưu công thức' : 'Lưu thay đổi'}</button>${!isNew ? '<button class="btn" id="fm-ver">Tạo phiên bản mới từ công thức này</button>' : ''}</div>` : '<p class="note">Chỉ CEO sửa công thức.</p>'}`, true);
+    if (!ed) return;
+    const keep = () => { f.dang = $('#fm-dang').value; f.co_me_kg = $('#fm-me').value; f.hao_hut_pct = $('#fm-hh').value; f.ty_trong = $('#fm-tt').value; f.hieu_luc_tu = $('#fm-hl').value; f.routing = $('#fm-rt').value; };
+    if (isNew) acBox($('#fm-sku'), $('#fm-skul'), () => (D.products || []).map(p => ({ ...p, s: p.sku + ' ' + p.ten })), p => `<b>${esc(p.ten)}</b><span>${esc(p.sku)}</span>`, p => { keep(); st.sku = p.sku; draw(); });
+    $$('#sheet [data-fl]').forEach(inp => { const i = +inp.dataset.fl; acBox(inp, $('#fll-' + i), () => items().filter(x => x.kind !== 'Thành phẩm').map(x => ({ ...x, s: x.code + ' ' + x.ten })), x => `<b>${esc(x.ten)}</b><span>${esc(x.code)} · ${esc(x.kind)} · ${esc(x.dvt)}</span>`, x => { keep(); st.lines[i].material_ma = x.code; draw(); }); });
+    $$('#sheet [data-fk]').forEach(el => el.oninput = () => { const [i, k] = el.dataset.fk.split('|'); st.lines[+i][k] = el.value; });
+    $$('#sheet [data-fdel]').forEach(b => b.onclick = () => { keep(); st.lines.splice(+b.dataset.fdel, 1); if (!st.lines.length) st.lines.push({ material_ma: '', kg_moi_me: '' }); draw(); });
+    $('#fm-add').onclick = () => { keep(); st.lines.push({ material_ma: '', kg_moi_me: '' }); draw(); };
+    const save = async asNew => {
+      keep(); const e = t => $('#fm-e').textContent = t, L = st.lines.filter(l => l.material_ma);
+      if (!st.sku) return e('Chọn sản phẩm'); if (!(+f.co_me_kg > 0)) return e('Nhập cỡ mẻ');
+      if (!L.length) return e('Chưa có thành phần'); if (L.some(l => !(+l.kg_moi_me > 0))) return e('Nhập định mức cho từng thành phần');
+      if (new Set(L.map(l => l.material_ma)).size !== L.length) return e('Một thành phần bị nhập 2 lần');
+      const head = { sku: st.sku, dang: f.dang, co_me_kg: +f.co_me_kg, hao_hut_pct: f.hao_hut_pct === '' ? 0 : +f.hao_hut_pct, ty_trong: f.ty_trong === '' || f.ty_trong == null ? null : +f.ty_trong, hieu_luc_tu: f.hieu_luc_tu || today(), routing: f.routing || null, active: isNew || asNew ? true : $('#fm-act').checked };
+      let fid = f.id;
+      if (isNew || asNew) { head.version = Math.max(0, ...F.filter(x => x.sku === st.sku).map(x => x.version)) + 1; const r = await SB.from('formulas').insert(head).select().single(); if (r.error) return e(errMsg(r.error)); fid = r.data.id; if (asNew) await SB.from('formulas').update({ active: false }).eq('id', f.id); }
+      else { const r = await SB.from('formulas').update(head).eq('id', fid); if (r.error) return e(errMsg(r.error)); await SB.from('formula_lines').delete().eq('formula_id', fid); }
+      const r2 = await SB.from('formula_lines').insert(L.map(l => ({ formula_id: fid, material_ma: l.material_ma, kg_moi_me: +l.kg_moi_me, thay_the_ma: l.thay_the_ma || null, he_so_thay_the: l.he_so_thay_the ? +l.he_so_thay_the : null })));
+      if (r2.error) return e(errMsg(r2.error)); closeSheet(); toast('Đã lưu công thức'); V.bom();
+    };
+    $('#fm-go').onclick = () => save(false); $('#fm-ver') && ($('#fm-ver').onclick = () => save(true));
+  };
+  draw();
+}
+
+// ---------- LỆNH SẢN XUẤT & PHIẾU CÂN ----------
+const LST = { cho_ceo: ['Chờ CEO duyệt', 'p-wait'], cho_can: ['Chờ cân', 'p-info'], dang_can: ['Đang cân', 'p-info'], hoan_thanh: ['Hoàn thành', 'p-ok'], huy: ['Đã hủy', 'p-bad'] };
+let pState = { st: 'dang' };
+V.prod = async () => {
+  const [P, B] = await Promise.all([qd(SB.from('production_orders').select('*').order('created_at', { ascending: false }).limit(300)), qd(SB.from('batches').select('lsx_id,me_so'))]);
+  const st = pState, done = id => B.filter(b => b.lsx_id === id).length;
+  const rs = P.filter(p => st.st === 'all' ? true : st.st === 'dang' ? ['cho_ceo', 'cho_can', 'dang_can'].includes(p.status) : p.status === st.st);
+  $('#view').innerHTML = `<div class="row between" style="margin-bottom:10px">${chipsHtml([['dang', 'Đang mở'], ['hoan_thanh', 'Hoàn thành'], ['huy', 'Đã hủy'], ['all', 'Tất cả']], st.st, 'pst')}${['ceo', 'to_truong'].includes(ME.role) ? '<button class="btn pri" id="lnew">+ Lệnh sản xuất</button>' : ''}</div>
+  <div class="scroll"><table class="stack"><thead><tr><th>Lệnh</th><th>Sản phẩm</th><th class="n">Số lượng</th><th class="n">Kg kế hoạch</th><th>Mẻ</th><th>Cho đơn</th><th>Trạng thái</th></tr></thead><tbody>
+  ${rs.map(p => `<tr class="click" data-lsx="${esc(p.id)}"><td data-l="Lệnh"><b>${esc(p.id)}</b><br><span class="note">${ftime(p.created_at)}</span></td><td data-l="Sản phẩm">${esc(prodName(p.sku))}</td><td class="n" data-l="SL">${num(p.so_luong_thuc ?? p.so_luong, 2)} ${esc(prod(p.sku)?.dvt || '')}</td><td class="n" data-l="Kg">${num(p.kg_ke_hoach, 1)}</td><td data-l="Mẻ">${done(p.id)}/${p.so_me}</td><td data-l="Đơn">${esc(p.from_order || 'Sản xuất tồn')}</td><td><span class="pill ${LST[p.status]?.[1]}">${LST[p.status]?.[0]}</span>${p.lot_code ? '<br><span class="note">lô ' + esc(p.lot_code) + '</span>' : ''}</td></tr>`).join('') || '<tr><td colspan="7" class="note">Không có lệnh.</td></tr>'}</tbody></table></div>
+  <p class="note">Lệnh tự tạo khi đơn hàng thiếu tồn, hoặc lập tay để sản xuất tồn kho. CEO duyệt → Tổ trưởng cân từng mẻ (quét mã NVL, lệch quá ±1% bị chặn) → mẻ cuối nhập kho thành phẩm, tạo lô và mẫu lưu.</p>`;
+  $$('[data-pst]').forEach(b => b.onclick = () => { st.st = b.dataset.pst; V.prod(); });
+  $('#lnew') && ($('#lnew').onclick = () => {
+    openSheet(`<div class="row between"><h2>Lệnh sản xuất mới</h2><button class="btn sm" id="close">Đóng</button></div><div class="field"><label for="ln-sku">Sản phẩm</label><div class="vitem"><input class="ac" id="ln-sku" placeholder="Gõ tên thành phẩm…" autocomplete="off"><div class="acl" id="ln-skul"></div></div></div><div class="field"><label for="ln-q">Số lượng (đơn vị bán)</label><input id="ln-q" type="number" step="any"></div><div class="err bad" id="ln-e"></div><button class="btn pri" id="ln-go">Lập lệnh – gửi CEO duyệt</button>`);
+    let sku = ''; acBox($('#ln-sku'), $('#ln-skul'), () => (D.products || []).filter(p => p.active !== false).map(p => ({ ...p, s: p.sku + ' ' + p.ten })), p => `<b>${esc(p.ten)}</b><span>${esc(p.sku)} · ${esc(p.dvt)}${LOTS ? ' · tồn ' + num(ton(p.sku)) : ''}</span>`, p => { sku = p.sku; $('#ln-sku').value = p.ten; });
+    $('#ln-go').onclick = async () => { if (!sku) return $('#ln-e').textContent = 'Chọn sản phẩm'; const { data, error } = await SB.rpc('create_lsx', { p_sku: sku, p_qty: +$('#ln-q').value, p_ghi_chu: null }); if (error) return $('#ln-e').textContent = errMsg(error); closeSheet(); toast('Đã lập ' + data); V.prod(); };
+  });
+  $$('[data-lsx]').forEach(tr => tr.onclick = () => lsxOpen(P.find(p => p.id === tr.dataset.lsx), done(tr.dataset.lsx)));
+};
+async function lsxOpen(x, done) {
+  const [[f], L] = await Promise.all([qd(SB.from('formulas').select('*').eq('id', x.formula_id)), qd(SB.from('formula_lines').select('*').eq('formula_id', x.formula_id))]);
+  await loadLots();
+  const nvl = L.filter(l => item(l.material_ma)?.kind !== 'Bao bì'), bb = L.filter(l => item(l.material_ma)?.kind === 'Bao bì'), last = done + 1 >= x.so_me;
+  const need = L.map(l => ({ ...l, tong: l.kg_moi_me * (x.so_me - done), ton: ton(l.material_ma) }));
+  const canWeigh = ['cho_can', 'dang_can'].includes(x.status) && ['to_truong', 'ceo'].includes(ME.role);
+  openSheet(`<div class="row between"><h2>${esc(x.id)}</h2><button class="btn sm" id="close">Đóng</button></div>
+  <div><span class="pill ${LST[x.status]?.[1]}">${LST[x.status]?.[0]}</span> <span class="note">· ${esc(prodName(x.sku))} · ${num(x.so_luong, 2)} ${esc(prod(x.sku)?.dvt || '')} · ${num(x.kg_ke_hoach, 1)} kg · ${x.so_me} mẻ ${f ? num(f.co_me_kg) + ' kg' : ''} · đã cân ${done}/${x.so_me}</span></div>
+  <h3 style="font-size:15px;margin:12px 0 6px">Nhu cầu vật tư còn lại</h3><div class="scroll"><table><thead><tr><th>Vật tư</th><th class="n">Định mức/mẻ</th><th class="n">Cần</th><th class="n">Tồn</th></tr></thead><tbody>${need.map(n => `<tr><td>${esc(itName(n.material_ma))}<br><span class="note">${esc(n.material_ma)}</span></td><td class="n">${num(n.kg_moi_me, 3)}</td><td class="n">${num(n.tong, 2)} ${esc(itDvt(n.material_ma))}</td><td class="n ${n.ton < n.tong ? 'bad' : ''}">${num(n.ton, 2)}</td></tr>`).join('')}</tbody></table></div>
+  ${canWeigh ? `<div class="card" style="margin-top:12px"><h3>Phiếu cân mẻ ${done + 1}/${x.so_me}</h3><p class="note" style="margin-top:-6px">Quét mã vạch trên bao NVL (hoặc gõ mã), nhập số kg thực cân. Lệch quá ±1% sẽ bị chặn. Bao bì tự trừ theo định mức.</p>
+   ${nvl.map((l, i) => `<div class="vline"><div><b>${esc(itName(l.material_ma))}</b> <span class="note">định mức ${num(l.kg_moi_me, 3)} kg</span></div><div class="vgrid"><label>Mã quét<input data-wq="${i}" autocapitalize="characters" placeholder="${esc(l.material_ma)}"></label><label>Kg thực cân<input type="number" step="any" inputmode="decimal" data-wk="${i}"></label><label>Kiểm tra<span class="vtt" id="wc-${i}" style="justify-content:flex-start">—</span></label></div></div>`).join('')}
+   ${bb.length ? `<p class="note">Bao bì trừ tự động: ${bb.map(l => esc(itName(l.material_ma)) + ' ' + num(l.kg_moi_me) + ' ' + esc(itDvt(l.material_ma))).join(', ')}</p>` : ''}
+   ${last ? `<div class="f2"><div class="field"><label for="w-q">Số lượng thành phẩm thực tế (${esc(prod(x.sku)?.dvt || '')})</label><input id="w-q" type="number" step="any" value="${x.so_luong}"></div><div class="field"><label for="w-tu">Vị trí tủ mẫu lưu</label><input id="w-tu" placeholder="vd: Tủ A – ngăn 3"></div></div>` : ''}
+   <div class="err bad" id="w-e" style="min-height:20px"></div><button class="btn pri" id="w-go">${last ? 'Chốt mẻ cuối – nhập kho thành phẩm' : 'Chốt mẻ ' + (done + 1)}</button></div>` : ''}
+  <div class="err bad" id="x-e" style="min-height:20px"></div>
+  <div class="row">${x.status === 'cho_ceo' && ME.role === 'ceo' ? '<button class="btn pri" id="x-ok">Duyệt lệnh</button>' : ''}${['cho_ceo', 'cho_can'].includes(x.status) && ME.role === 'ceo' ? '<button class="btn bad" id="x-del">Hủy lệnh</button>' : ''}</div>`, true);
+  const chk = i => { const l = nvl[i], q = ($(`[data-wq="${i}"]`).value || '').trim().toUpperCase(), k = +$(`[data-wk="${i}"]`).value, c = $('#wc-' + i); if (!q && !k) return c.textContent = '—'; const okc = q === l.material_ma.toUpperCase(), okk = Math.abs(k - l.kg_moi_me) <= l.kg_moi_me * 0.01 + 0.05; c.innerHTML = !okc ? '<span class="bad">Sai mã</span>' : !k ? 'Nhập kg' : okk ? '<span class="ok">✓ Đạt</span>' : `<span class="bad">Lệch ${num(k - l.kg_moi_me, 3)} kg</span>`; };
+  $$('#sheet [data-wq],#sheet [data-wk]').forEach(el => el.oninput = () => chk(+(el.dataset.wq ?? el.dataset.wk)));
+  $('#w-go') && ($('#w-go').onclick = async () => {
+    const w = nvl.map((l, i) => ({ material: l.material_ma, ma_quet: $(`[data-wq="${i}"]`).value.trim(), kg: +$(`[data-wk="${i}"]`).value }));
+    if (w.some(x => !x.ma_quet || !(x.kg > 0))) return $('#w-e').textContent = 'Quét mã và nhập kg cho đủ các NVL';
+    $('#w-go').disabled = true;
+    const { data, error } = await SB.rpc('close_batch', { p_lsx: x.id, p_w: w, p_tu: last ? ($('#w-tu').value.trim() || null) : null, p_qty_thuc: last ? +$('#w-q').value : null });
+    if (error) { $('#w-go').disabled = false; return $('#w-e').textContent = errMsg(error); } closeSheet(); toast(data); LOTS = null; V.prod();
+  });
+  $('#x-ok') && ($('#x-ok').onclick = async () => { const { error } = await SB.rpc('approve_lsx', { p_lsx: x.id }); if (error) return $('#x-e').textContent = errMsg(error); closeSheet(); toast('Đã duyệt lệnh'); route(); });
+  $('#x-del') && ($('#x-del').onclick = async () => { const { error } = await SB.rpc('cancel_lsx', { p_lsx: x.id }); if (error) return $('#x-e').textContent = errMsg(error); closeSheet(); toast('Đã hủy lệnh'); route(); });
+}
+
+// ---------- IQC & MẪU LƯU ----------
+const IQS = { cho_lay_mau: ['Chờ lấy mẫu', 'p-wait'], dat: ['Đạt', 'p-ok'], khong_dat_cho_ceo: ['Không đạt – chờ CEO xử lý', 'p-bad'], khong_dat_tra_ncc: ['Không đạt – trả NCC', 'p-bad'], khong_dat_ceo_cho_dung: ['Không đạt – CEO cho dùng / xử lý khác', 'p-wait'] };
+let qcTab = 'iqc';
+V.qc = async () => {
+  const tabs = chipsHtml([['iqc', 'Kiểm tra đầu vào (IQC)'], ['mau', 'Mẫu lưu thành phẩm']], qcTab, 'qct');
+  if (qcTab === 'iqc') {
+    const Q = await qd(SB.from('iqc_checks').select('*').order('ts', { ascending: false }).limit(300));
+    $('#view').innerHTML = tabs + `<div class="scroll" style="margin-top:10px"><table class="stack"><thead><tr><th>Lô</th><th>NVL</th><th class="n">Số lượng</th><th>Nguồn</th><th>Kết quả</th><th>Trạng thái</th></tr></thead><tbody>${Q.map(q => `<tr class="${q.status === 'cho_lay_mau' && ['to_truong', 'ceo'].includes(ME.role) ? 'click' : ''}" data-iqc="${q.id}"><td data-l="Lô"><b>${esc(q.lot_code)}</b><br><span class="note">${ftime(q.ts)}</span></td><td data-l="NVL">${esc(itName(q.material_ma))}</td><td class="n" data-l="SL">${num(q.qty, 2)} ${esc(itDvt(q.material_ma))}</td><td data-l="Nguồn">${esc(q.po_id || q.doc_id || '')}</td><td data-l="Kết quả">${esc(q.ket_qua || '')}</td><td><span class="pill ${IQS[q.status]?.[1]}">${IQS[q.status]?.[0]}</span></td></tr>`).join('') || '<tr><td colspan="6" class="note">Chưa có lô chờ kiểm. Lô tự tạo khi nhập mua NVL (phiếu nhập hoặc nhận hàng theo PO).</td></tr>'}</tbody></table></div><p class="note">Lô không đạt tự chuyển khu cách ly và tạo phiếu hàng lỗi để CEO quyết định (trả NCC, hạ cấp, hủy…).</p>`;
+    $$('[data-iqc]').forEach(tr => tr.classList.contains('click') && (tr.onclick = () => {
+      const q = Q.find(x => x.id === +tr.dataset.iqc);
+      openSheet(`<div class="row between"><h2>IQC lô ${esc(q.lot_code)}</h2><button class="btn sm" id="close">Đóng</button></div><p>${esc(itName(q.material_ma))} · ${num(q.qty, 2)} ${esc(itDvt(q.material_ma))}</p>
+      <div class="field"><label for="iq-kq">Chỉ tiêu và kết quả đo</label><input id="iq-kq" placeholder="vd: Ẩm 1,8% (≤2%), N 46,1% (≥46%)"></div>
+      ${q.po_id ? `<div class="field"><label for="iq-vt">Vị trí nhập kho nếu đạt</label><div class="vitem"><input class="ac" id="iq-vt" value="${esc(item(q.material_ma)?.vt || '')}" autocomplete="off"><div class="acl" id="iq-vtl"></div></div></div>` : '<p class="note">Lô đã nhập kho bằng phiếu nhập; không đạt sẽ tự chuyển vào khu cách ly.</p>'}
+      <div class="err bad" id="iq-e"></div><div class="row"><button class="btn pri" id="iq-ok">Đạt</button><button class="btn bad" id="iq-ng">Không đạt</button></div>`);
+      if ($('#iq-vt')) acBox($('#iq-vt'), $('#iq-vtl'), () => khoLocs(D.locations.find(l => l.id === item(q.material_ma)?.vt)?.warehouse_id || 'KHO-NVL').map(l => ({ ...l, s: l.id })), l => `<b>${esc(l.id)}</b>`, l => $('#iq-vt').value = l.id);
+      const go = async dat => { const kq = $('#iq-kq').value.trim(); if (!kq) return $('#iq-e').textContent = 'Nhập kết quả kiểm'; const vt = $('#iq-vt')?.value.trim() || null; if (dat && q.po_id && !vt) return $('#iq-e').textContent = 'Chọn vị trí nhập kho';
+        const { error } = await SB.rpc('iqc_result', { p_id: q.id, p_ket_qua: kq, p_dat: dat, p_vi_tri: vt }); if (error) return $('#iq-e').textContent = errMsg(error); closeSheet(); toast(dat ? 'IQC đạt' : 'Không đạt – đã chuyển cách ly'); V.qc(); };
+      $('#iq-ok').onclick = () => go(true); $('#iq-ng').onclick = () => go(false);
+    }));
+  } else {
+    const R = await qd(SB.from('retained_samples').select('*').order('created_at', { ascending: false }).limit(300)), td = today();
+    $('#view').innerHTML = tabs + `<div class="scroll" style="margin-top:10px"><table class="stack"><thead><tr><th>Lô</th><th>Sản phẩm</th><th>Đơn hàng</th><th>Vị trí tủ</th><th>Lưu đến</th><th>Thành phần (lô NVL)</th></tr></thead><tbody>${R.map(r => `<tr><td data-l="Lô"><b>${esc(r.lot_code)}</b></td><td data-l="Sản phẩm">${esc(prodName(r.sku))}</td><td data-l="Đơn">${esc(r.order_id || '')}</td><td data-l="Tủ">${['to_truong', 'ceo'].includes(ME.role) ? `<input data-tu="${r.id}" value="${esc(r.vi_tri_tu)}" style="${inputCss};width:140px">` : esc(r.vi_tri_tu)}</td><td data-l="Lưu đến" class="${r.luu_den < td ? 'bad' : ''}">${fdate(r.luu_den)}${r.luu_den < td ? ' · hết hạn lưu' : ''}</td><td data-l="Thành phần">${(r.thanh_phan || []).map(t => `${esc(itName(t.material))} lô ${esc(t.lot)} (${num(t.kg, 2)} kg)`).join('; ')}</td></tr>`).join('') || '<tr><td colspan="6" class="note">Chưa có mẫu lưu. Mẫu tự tạo khi hoàn thành lệnh sản xuất.</td></tr>'}</tbody></table></div>`;
+    $$('[data-tu]').forEach(i => i.onchange = async () => { const { error } = await SB.from('retained_samples').update({ vi_tri_tu: i.value.trim() }).eq('id', +i.dataset.tu); toast(error ? errMsg(error) : 'Đã lưu vị trí tủ'); });
+  }
+  $$('[data-qct]').forEach(b => b.onclick = () => { qcTab = b.dataset.qct; V.qc(); });
+};
+
+// ---------- TRUY XUẤT ----------
+let trQ = '';
+V.trace = async () => {
+  $('#view').innerHTML = `<div class="row" style="margin-bottom:12px">${searchBox('trq', trQ, 'Nhập mã lô (thành phẩm / NVL) hoặc số đơn hàng…')}<button class="btn pri" id="trgo">Truy xuất</button></div><div id="trout"><p class="note">Ví dụ: lô thành phẩm → biết lô NVL nào đã trộn, lệnh SX, mẫu lưu, giao cho đại lý nào. Lô NVL → biết đã vào những lô thành phẩm và đơn hàng nào. Số đơn → biết lô đã giao.</p></div>`;
+  const go = async () => {
+    trQ = $('#trq').value.trim(); if (!trQ) return; const out = $('#trout'); out.innerHTML = '<p class="note"><span class="spin"></span> Đang tìm…</p>';
+    const blocks = [];
+    const fgBlock = async lotCode => {
+      const [lots, [rs], [px]] = await Promise.all([qd(SB.from('stock_lots').select('*').eq('lot_code', lotCode)), qd(SB.from('retained_samples').select('*').eq('lot_code', lotCode)), qd(SB.from('production_orders').select('*').eq('lot_code', lotCode))]);
+      const ids = lots.map(l => l.id), mv = ids.length ? await qd(SB.from('stock_moves').select('*').in('lot_id', ids).eq('ref_type', 'order')) : [];
+      const ords = [...new Set(mv.map(m => m.ref_id))], O = ords.length ? await qd(SB.from('orders').select('id,dealer_id,created_at').in('id', ords)) : [];
+      return `<div class="card" style="margin-bottom:12px"><h3>Lô thành phẩm ${esc(lotCode)} · ${esc(prodName(lots[0]?.item_code || rs?.sku || ''))}</h3>
+      ${px ? `<p>Lệnh sản xuất <b>${esc(px.id)}</b> · ${num(px.so_luong_thuc ?? px.so_luong, 2)} ${esc(prod(px.sku)?.dvt || '')}${px.from_order ? ' · cho đơn ' + esc(px.from_order) : ''}</p>` : ''}
+      ${rs ? `<p><b>Mẫu lưu:</b> ${esc(rs.vi_tri_tu)} · lưu đến ${fdate(rs.luu_den)}</p><p><b>NVL đã dùng:</b> ${(rs.thanh_phan || []).map(t => `${esc(itName(t.material))} lô <b>${esc(t.lot)}</b> ${num(t.kg, 2)} kg`).join('; ') || '—'}</p>` : ''}
+      <p><b>Tồn hiện tại:</b> ${lots.map(l => `${num(l.qty, 2)} tại ${esc(l.location_id || '—')}`).join('; ') || '0'}</p>
+      <p><b>Đã giao cho:</b> ${O.map(o => `${esc(dlr(o.dealer_id)?.ten || o.dealer_id)} (đơn ${esc(o.id)}, ${num(-mv.filter(m => m.ref_id === o.id).reduce((a, m) => a + +m.qty, 0), 2)})`).join('; ') || 'chưa xuất bán'}</p></div>`;
+    };
+    if (/^DH-/i.test(trQ)) {
+      const mv = await qd(SB.from('stock_moves').select('lot_id,qty').eq('ref_type', 'order').eq('ref_id', trQ.toUpperCase()));
+      const L = mv.length ? await qd(SB.from('stock_lots').select('lot_code').in('id', mv.map(m => m.lot_id))) : [];
+      for (const c of [...new Set(L.map(l => l.lot_code))]) blocks.push(await fgBlock(c));
+      if (!blocks.length) blocks.push('<p class="note">Đơn chưa xuất kho hoặc không tìm thấy.</p>');
+    } else {
+      const lots = await qd(SB.from('stock_lots').select('*').eq('lot_code', trQ));
+      if (!lots.length) blocks.push('<p class="note">Không tìm thấy lô này.</p>');
+      else if (lots[0].kind === 'Thành phẩm' || item(lots[0].item_code)?.kind === 'Thành phẩm') blocks.push(await fgBlock(trQ));
+      else {
+        const mv = await qd(SB.from('stock_moves').select('*').in('lot_id', lots.map(l => l.id)).eq('ref_type', 'lsx'));
+        const lsx = [...new Set(mv.map(m => m.ref_id))], P = lsx.length ? await qd(SB.from('production_orders').select('*').in('id', lsx)) : [];
+        blocks.push(`<div class="card" style="margin-bottom:12px"><h3>Lô NVL ${esc(trQ)} · ${esc(itName(lots[0].item_code))}</h3><p><b>Tồn hiện tại:</b> ${lots.map(l => `${num(l.qty, 2)} tại ${esc(l.location_id || '—')}`).join('; ')}</p><p><b>Đã dùng cho:</b> ${P.map(p => `lệnh ${esc(p.id)} → lô TP <b>${esc(p.lot_code || 'đang SX')}</b> (${num(-mv.filter(m => m.ref_id === p.id).reduce((a, m) => a + +m.qty, 0), 2)} kg)`).join('; ') || 'chưa dùng'}</p></div>`);
+        for (const p of P.filter(p => p.lot_code)) blocks.push(await fgBlock(p.lot_code));
+      }
+    }
+    out.innerHTML = blocks.join('');
+  };
+  $('#trgo').onclick = go; $('#trq').onkeydown = e => { if (e.key === 'Enter') go(); }; if (trQ) go();
+};
+
+// ---------- BẢO TRÌ ----------
+V.maint = async () => {
+  const [M, R] = await Promise.all([qd(SB.from('machines').select('*').order('id')), qd(SB.from('repair_requests').select('*').order('ts', { ascending: false }).limit(200))]);
+  const td = today(), ed = ['ceo', 'to_truong'].includes(ME.role);
+  $('#view').innerHTML = `<div class="card" style="margin-bottom:14px"><h3>Lịch bảo trì định kỳ</h3><div class="scroll"><table class="stack"><thead><tr><th>Máy</th><th>Việc định kỳ</th><th>Chu kỳ</th><th>Hạn kế tiếp</th><th></th></tr></thead><tbody>
+  ${M.filter(m => m.active !== false).map(m => { const late = m.han_ke_tiep && m.han_ke_tiep < td, soon = m.han_ke_tiep && !late && m.han_ke_tiep <= new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10); return `<tr><td data-l="Máy"><b>${esc(m.ten)}</b><br><span class="note">${esc(m.id)}</span></td><td data-l="Việc">${esc(m.viec_dinh_ky || '')}</td><td data-l="Chu kỳ">${m.chu_ky_ngay ? m.chu_ky_ngay + ' ngày' : ''}</td><td data-l="Hạn"><span class="${late ? 'bad' : ''}">${fdate(m.han_ke_tiep)}</span>${late ? ' <span class="pill p-bad">Quá hạn</span>' : soon ? ' <span class="pill p-wait">Sắp đến</span>' : ''}</td><td>${ed && m.chu_ky_ngay ? `<button class="btn sm" data-mdone="${esc(m.id)}">Đã bảo trì hôm nay</button>` : ''}</td></tr>`; }).join('') || '<tr><td colspan="5" class="note">Chưa có máy. Thêm ở Danh mục › Máy móc thiết bị.</td></tr>'}</tbody></table></div></div>
+  <div class="card"><div class="row between"><h3 style="margin:0">Yêu cầu sửa chữa</h3>${ed ? '<button class="btn sm pri" id="rnew">+ Báo hỏng</button>' : ''}</div><div class="scroll"><table class="stack" style="margin-top:8px"><thead><tr><th>Số</th><th>Máy</th><th>Hư hỏng</th><th>Phụ tùng</th><th>Trạng thái</th></tr></thead><tbody>
+  ${R.map(r => `<tr><td data-l="Số"><b>${esc(r.id)}</b><br><span class="note">${ftime(r.ts)} · ${esc(userName(r.user_id))}</span></td><td data-l="Máy">${esc(M.find(m => m.id === r.machine_id)?.ten || r.machine_id)}</td><td data-l="Hư hỏng">${esc(r.mo_ta)}</td><td data-l="Phụ tùng">${esc(r.phu_tung || '')}</td><td>${ed ? `<select data-rst="${esc(r.id)}" style="${inputCss}">${['Chờ sửa', 'Đang sửa', 'Chờ phụ tùng', 'Đã xong'].map(s => `<option ${s === r.status ? 'selected' : ''}>${s}</option>`).join('')}</select>` : esc(r.status)}</td></tr>`).join('') || '<tr><td colspan="5" class="note">Chưa có yêu cầu.</td></tr>'}</tbody></table></div></div>`;
+  $$('[data-mdone]').forEach(b => b.onclick = async () => { const m = M.find(x => x.id === b.dataset.mdone), nx = new Date(Date.now() + 7 * 3600e3 + m.chu_ky_ngay * 864e5).toISOString().slice(0, 10); const { error } = await SB.from('machines').update({ han_ke_tiep: nx }).eq('id', m.id); toast(error ? errMsg(error) : 'Hạn kế tiếp: ' + fdate(nx)); await loadMaster('machines'); V.maint(); });
+  $$('[data-rst]').forEach(s => s.onchange = async () => { const { error } = await SB.from('repair_requests').update({ status: s.value }).eq('id', s.dataset.rst); toast(error ? errMsg(error) : 'Đã cập nhật'); });
+  $('#rnew') && ($('#rnew').onclick = () => { openSheet(`<div class="row between"><h2>Báo hỏng máy</h2><button class="btn sm" id="close">Đóng</button></div><div class="field"><label for="r-m">Máy</label><select id="r-m">${M.map(m => `<option value="${esc(m.id)}">${esc(m.ten)}</option>`).join('')}</select></div><div class="field"><label for="r-d">Mô tả hư hỏng</label><input id="r-d"></div><div class="field"><label for="r-p">Phụ tùng cần thay</label><input id="r-p"></div><div class="err bad" id="r-e"></div><button class="btn pri" id="r-go">Gửi yêu cầu</button>`);
+    $('#r-go').onclick = async () => { const { data, error } = await SB.rpc('create_repair', { p_machine: $('#r-m').value, p_mo_ta: $('#r-d').value, p_phu_tung: $('#r-p').value || null }); if (error) return $('#r-e').textContent = errMsg(error); closeSheet(); toast('Đã gửi ' + data); V.maint(); }; });
+};
+
+// ---------- HÀNG LỖI & HỦY ----------
+const DST = { cho_de_xuat: ['Chờ Tổ trưởng đề xuất', 'p-wait'], cho_ceo: ['Chờ CEO duyệt', 'p-bad'], da_xu_ly: ['Đã xử lý', 'p-ok'] };
+let dfTab = 'mo';
+V.defect = async () => {
+  const [Dx] = await Promise.all([qd(SB.from('defects').select('*').order('ts', { ascending: false }).limit(300)), loadLots()]);
+  const ids = [...new Set(Dx.map(d => d.lot_id))], LT = ids.length ? await qd(SB.from('stock_lots').select('*').in('id', ids)) : [], lot = id => LT.find(l => l.id === id) || {};
+  const rs = Dx.filter(d => dfTab === 'all' || (dfTab === 'mo' ? d.status !== 'da_xu_ly' : d.status === 'da_xu_ly'));
+  $('#view').innerHTML = `<div class="row between" style="margin-bottom:10px">${chipsHtml([['mo', 'Đang xử lý'], ['xong', 'Đã xử lý'], ['all', 'Tất cả']], dfTab, 'dft')}${['to_truong', 'ceo', 'ke_toan'].includes(ME.role) ? '<button class="btn pri" id="dnew">+ Báo hàng lỗi trong kho</button>' : ''}</div>
+  <div class="scroll"><table class="stack"><thead><tr><th>Phiếu</th><th>Nguồn</th><th>Hàng / lô</th><th class="n">SL</th><th>Mô tả</th><th>Đề xuất</th><th>Trạng thái</th></tr></thead><tbody>
+  ${rs.map(d => { const l = lot(d.lot_id); return `<tr class="click" data-df="${esc(d.id)}"><td data-l="Phiếu"><b>${esc(d.id)}</b><br><span class="note">${ftime(d.ts)}</span></td><td data-l="Nguồn">${esc(d.nguon)}${d.dealer_id ? '<br><span class="note">' + esc(dlr(d.dealer_id)?.ten || d.dealer_id) + '</span>' : ''}</td><td data-l="Hàng">${esc(itName(l.item_code))}<br><span class="note">lô ${esc(l.lot_code || '')}</span></td><td class="n" data-l="SL">${num(d.qty, 2)} ${esc(itDvt(l.item_code))}</td><td data-l="Mô tả">${esc(d.mo_ta || '')}</td><td data-l="Đề xuất">${esc(d.de_xuat || '')}</td><td><span class="pill ${DST[d.status]?.[1]}">${DST[d.status]?.[0]}</span>${d.bien_ban ? '<br><span class="note">BB ' + esc(d.bien_ban) + '</span>' : ''}</td></tr>`; }).join('') || '<tr><td colspan="7" class="note">Không có phiếu.</td></tr>'}</tbody></table></div>
+  <p class="note">Hàng lỗi nằm ở khu cách ly, không tính tồn khả dụng. Tổ trưởng đề xuất → CEO duyệt → hệ thống tự lập phiếu xuất hủy / trả NCC / chuyển hạ cấp; hủy có số biên bản. Hàng đại lý trả: Kế toán ghi giảm công nợ.</p>`;
+  $$('[data-dft]').forEach(b => b.onclick = () => { dfTab = b.dataset.dft; V.defect(); });
+  $$('[data-df]').forEach(tr => tr.onclick = () => { const d = Dx.find(x => x.id === tr.dataset.df), l = lot(d.lot_id);
+    openSheet(`<div class="row between"><h2>${esc(d.id)}</h2><button class="btn sm" id="close">Đóng</button></div><p><span class="pill ${DST[d.status]?.[1]}">${DST[d.status]?.[0]}</span> <span class="note">${esc(d.nguon)} · ${ftime(d.ts)}</span></p>
+    <div class="card">${esc(itName(l.item_code))} · lô ${esc(l.lot_code || '')} · <b>${num(d.qty, 2)} ${esc(itDvt(l.item_code))}</b> tại ${esc(l.location_id || '')}<br>${esc(d.mo_ta || '')}${d.ket_qua ? '<br><b>Kết quả:</b> ' + esc(d.ket_qua) : ''}${d.doc_xu_ly ? '<br><b>Phiếu xử lý:</b> ' + esc(d.doc_xu_ly) : ''}${d.da_giam_no ? '<br><b>Đã giảm nợ:</b> ' + vnd(d.da_giam_no) : ''}</div>
+    <div class="err bad" id="dd-e" style="min-height:20px"></div>
+    ${d.status === 'cho_de_xuat' && ['to_truong', 'ceo'].includes(ME.role) ? `<div class="field"><label for="dd-x">Đề xuất xử lý</label><select id="dd-x">${['Tái chế', 'Hạ cấp', 'Trả NCC', 'Hủy'].map(x => `<option>${x}</option>`).join('')}</select></div><button class="btn pri" id="dd-p">Gửi CEO duyệt</button>` : ''}
+    ${d.status === 'cho_ceo' && ME.role === 'ceo' ? `<p>Đề xuất: <b>${esc(d.de_xuat)}</b></p><div class="field"><label for="dd-n">Ghi chú</label><input id="dd-n"></div><div class="row"><button class="btn pri" id="dd-ok">Duyệt</button><button class="btn" id="dd-no">Yêu cầu đề xuất lại</button></div>` : ''}
+    ${d.status === 'da_xu_ly' && d.nguon === 'Đại lý trả về' && !d.da_giam_no && ['ke_toan', 'ceo'].includes(ME.role) ? `<div class="field"><label for="dd-t">Số tiền giảm nợ cho đại lý (đ)</label><input id="dd-t" type="number"></div><button class="btn pri" id="dd-c">Ghi giảm công nợ</button>` : ''}`);
+    const e = t => $('#dd-e').textContent = t, fin = m => { closeSheet(); toast(m); V.defect(); };
+    $('#dd-p') && ($('#dd-p').onclick = async () => { const { error } = await SB.rpc('defect_propose', { p_id: d.id, p_de_xuat: $('#dd-x').value }); error ? e(errMsg(error)) : fin('Đã gửi CEO'); });
+    $('#dd-ok') && ($('#dd-ok').onclick = async () => { const { data, error } = await SB.rpc('defect_decide', { p_id: d.id, p_duyet: true, p_ghi_chu: $('#dd-n').value || null }); error ? e(errMsg(error)) : fin('Đã duyệt, phiếu ' + data); });
+    $('#dd-no') && ($('#dd-no').onclick = async () => { const { error } = await SB.rpc('defect_decide', { p_id: d.id, p_duyet: false, p_ghi_chu: $('#dd-n').value || null }); error ? e(errMsg(error)) : fin('Đã trả lại đề xuất'); });
+    $('#dd-c') && ($('#dd-c').onclick = async () => { const { error } = await SB.rpc('defect_credit', { p_id: d.id, p_so_tien: +$('#dd-t').value }); error ? e(errMsg(error)) : fin('Đã ghi giảm nợ'); });
+  });
+  $('#dnew') && ($('#dnew').onclick = () => {
+    const ok = (LOTS || []).filter(l => !isQuar(l.location_id) && +l.qty > 0);
+    openSheet(`<div class="row between"><h2>Báo hàng lỗi trong kho</h2><button class="btn sm" id="close">Đóng</button></div><p class="note">Lô được chuyển vào khu cách ly và tạo phiếu hàng lỗi.</p>
+    <div class="field"><label for="dn-l">Lô hàng</label><div class="vitem"><input class="ac" id="dn-l" placeholder="Gõ tên hàng hoặc mã lô…" autocomplete="off"><div class="acl" id="dn-ll"></div></div></div>
+    <div class="field"><label for="dn-q">Số lượng lỗi</label><input id="dn-q" type="number" step="any"></div><div class="field"><label for="dn-n">Nguồn lỗi</label><select id="dn-n">${['Hỏng trong kho', 'Lỗi sản xuất', 'Hết hạn', 'Khác'].map(x => `<option>${x}</option>`).join('')}</select></div><div class="field"><label for="dn-m">Mô tả</label><input id="dn-m" placeholder="vd: bao rách, vón cục"></div><div class="err bad" id="dn-e"></div><button class="btn pri" id="dn-go">Chuyển cách ly</button>`);
+    let sel = null; acBox($('#dn-l'), $('#dn-ll'), () => ok.map(l => ({ ...l, s: l.item_code + ' ' + itName(l.item_code) + ' ' + l.lot_code })), l => `<b>${esc(itName(l.item_code))}</b><span>lô ${esc(l.lot_code)} · ${esc(l.location_id || '')} · còn ${num(l.qty, 2)}</span>`, l => { sel = l; $('#dn-l').value = itName(l.item_code) + ' · lô ' + l.lot_code; });
+    $('#dn-go').onclick = async () => { if (!sel) return $('#dn-e').textContent = 'Chọn lô'; const { error } = await SB.rpc('stock_doc_manual', { p_loai: 'Chuyển vào cách ly', p_kind: sel.kind, p_item: sel.item_code, p_lot: sel.lot_code, p_qty: +$('#dn-q').value, p_vi_tri: sel.location_id, p_vi_tri_den: null, p_ref: $('#dn-m').value || null, p_dealer: null, p_nguon_loi: $('#dn-n').value, p_offline: null }); if (error) return $('#dn-e').textContent = errMsg(error); closeSheet(); toast('Đã chuyển cách ly'); LOTS = null; V.defect(); };
+  });
+};
+
+// ---------- KIỂM KÊ ----------
+V.count = async () => {
+  const S = await qd(SB.from('stocktakes').select('*').order('mo_luc', { ascending: false }).limit(20)), cur = S.find(s => s.status !== 'da_duyet');
+  const can2 = ['to_truong', 'ceo'].includes(ME.role);
+  if (!cur) {
+    $('#view').innerHTML = `<div class="card"><h3>Chưa có đợt kiểm kê đang mở</h3>${can2 ? `<div class="row"><input id="ck-k" value="Kiểm kê tháng ${today().slice(5, 7)}/${today().slice(0, 4)}" style="${inputCss};min-width:260px"><button class="btn pri" id="ck-o">Mở đợt kiểm kê</button></div><p class="note">Hệ thống chụp số sổ sách của mọi lô đang tồn để đếm thực tế.</p>` : ''}</div>
+    <h3 style="font-size:15px">Các đợt đã duyệt</h3>${S.map(s => `<div class="alert"><span>${esc(s.ky)}</span><span class="note">${ftime(s.mo_luc)}${s.doc_id ? ' · phiếu ' + esc(s.doc_id) : ''}</span></div>`).join('') || '<p class="note">Chưa có.</p>'}`;
+    $('#ck-o') && ($('#ck-o').onclick = async () => { const { error } = await SB.rpc('stocktake_open', { p_ky: $('#ck-k').value.trim() }); if (error) return toast(errMsg(error)); toast('Đã mở đợt kiểm kê'); V.count(); });
+    return;
+  }
+  const L = await qd(SB.from('stocktake_lines').select('*').eq('stocktake_id', cur.id)), ids = L.map(l => l.lot_id), LT = ids.length ? await qd(SB.from('stock_lots').select('*').in('id', ids)) : [], lot = id => LT.find(l => l.id === id) || {};
+  const counted = L.filter(l => l.thuc_te != null).length, diff = L.filter(l => l.thuc_te != null && +l.thuc_te !== +l.so_sach), dv = diff.reduce((a, l) => a + (l.thuc_te - l.so_sach) * (+lot(l.lot_id).don_gia || 0), 0);
+  $('#view').innerHTML = `<div class="card" style="margin-bottom:12px"><div class="row between"><div><b>${esc(cur.ky)}</b> · mở ${ftime(cur.mo_luc)} · <span class="pill ${cur.status === 'cho_ceo' ? 'p-wait' : 'p-info'}">${cur.status === 'cho_ceo' ? 'Chờ CEO duyệt' : 'Đang đếm'}</span></div><div>Đã đếm <b>${counted}/${L.length}</b> lô · lệch <b>${diff.length}</b> lô · giá trị lệch <b class="${dv < 0 ? 'bad' : ''}">${vnd(dv)}</b></div></div>
+  <div class="row" style="margin-top:8px">${cur.status === 'dang_dem' && can2 ? '<button class="btn pri" id="ck-s">Gửi CEO duyệt</button>' : ''}${cur.status === 'cho_ceo' && ME.role === 'ceo' ? '<button class="btn pri" id="ck-a">Duyệt – lập phiếu điều chỉnh</button>' : ''}</div></div>
+  <div class="scroll"><table class="stack"><thead><tr><th>Hàng</th><th>Lô</th><th>Vị trí</th><th class="n">Sổ sách</th><th class="n">Thực tế</th><th class="n">Lệch</th></tr></thead><tbody>
+  ${L.sort((a, b) => String(lot(a.lot_id).location_id).localeCompare(String(lot(b.lot_id).location_id))).map(l => { const t = lot(l.lot_id), d = l.thuc_te == null ? null : l.thuc_te - l.so_sach; return `<tr><td data-l="Hàng">${esc(itName(t.item_code))}</td><td data-l="Lô">${esc(t.lot_code || '')}</td><td data-l="Vị trí">${esc(t.location_id || '')}</td><td class="n" data-l="Sổ sách">${num(l.so_sach, 3)}</td><td class="n" data-l="Thực tế">${cur.status === 'dang_dem' && can2 ? `<input type="number" step="any" inputmode="decimal" data-ct="${l.lot_id}" value="${l.thuc_te ?? ''}" style="${inputCss};width:110px;text-align:right">` : num(l.thuc_te, 3)}</td><td class="n ${d ? 'bad' : ''}" data-l="Lệch">${d == null ? '' : (d > 0 ? '+' : '') + num(d, 3)}</td></tr>`; }).join('')}</tbody></table></div>`;
+  $$('[data-ct]').forEach(i => i.onchange = async () => { if (i.value === '') return; const { error } = await SB.rpc('stocktake_count', { p_st: cur.id, p_lot: +i.dataset.ct, p_thuc: +i.value }); if (error) toast(errMsg(error)); else V.count(); });
+  $('#ck-s') && ($('#ck-s').onclick = async () => { const { error } = await SB.rpc('stocktake_submit', { p_st: cur.id }); toast(error ? errMsg(error) : 'Đã gửi CEO'); V.count(); });
+  $('#ck-a') && ($('#ck-a').onclick = async () => { const { data, error } = await SB.rpc('stocktake_approve', { p_st: cur.id }); toast(error ? errMsg(error) : 'Đã điều chỉnh tồn, phiếu ' + data); LOTS = null; V.count(); });
+};
+
+// ---------- NHẬP – XUẤT – TỒN ----------
+let nxS = { tu: today().slice(0, 8) + '01', den: today(), k: '' };
+V.nxt = async () => {
+  const R = await qd(SB.rpc('nxt', { p_tu: nxS.tu, p_den: nxS.den }));
+  const rs = R.filter(r => !nxS.k || r.kind === nxS.k).sort((a, b) => a.item_code.localeCompare(b.item_code)), tv = rs.reduce((a, r) => a + +r.gia_tri_cuoi, 0);
+  $('#view').innerHTML = `<div class="row between" style="margin-bottom:10px"><div class="row"><label>Từ <input type="date" id="nx-a" value="${nxS.tu}" style="${inputCss}"></label><label>Đến <input type="date" id="nx-b" value="${nxS.den}" style="${inputCss}"></label>${chipsHtml([['', 'Tất cả'], ['NVL', 'NVL'], ['Bao bì', 'Bao bì'], ['Thành phẩm', 'Thành phẩm']], nxS.k, 'nxk')}</div><button class="btn" id="nx-x">Tải Excel (CSV)</button></div>
+  <div class="scroll"><table class="stack"><thead><tr><th>Mã</th><th>Tên hàng</th><th>ĐVT</th><th class="n">Tồn đầu</th><th class="n">Nhập</th><th class="n">Xuất</th><th class="n">Tồn cuối</th><th class="n">Giá trị cuối</th></tr></thead><tbody>
+  ${rs.map(r => `<tr><td data-l="Mã">${esc(r.item_code)}</td><td data-l="Tên">${esc(itName(r.item_code))}</td><td data-l="ĐVT">${esc(itDvt(r.item_code))}</td><td class="n" data-l="Tồn đầu">${num(r.ton_dau, 2)}</td><td class="n" data-l="Nhập">${num(r.nhap, 2)}</td><td class="n" data-l="Xuất">${num(r.xuat, 2)}</td><td class="n" data-l="Tồn cuối"><b>${num(r.ton_cuoi, 2)}</b></td><td class="n" data-l="Giá trị">${vnd(r.gia_tri_cuoi)}</td></tr>`).join('') || '<tr><td colspan="8" class="note">Không có phát sinh.</td></tr>'}
+  ${rs.length ? `<tr><td colspan="7"><b>Tổng giá trị tồn cuối</b></td><td class="n"><b>${vnd(tv)}</b></td></tr>` : ''}</tbody></table></div><p class="note">Nhập/xuất không tính điều chuyển nội bộ giữa vị trí, kho.</p>`;
+  $('#nx-a').onchange = $('#nx-b').onchange = () => { nxS.tu = $('#nx-a').value; nxS.den = $('#nx-b').value; V.nxt(); };
+  $$('[data-nxk]').forEach(b => b.onclick = () => { nxS.k = b.dataset.nxk; V.nxt(); });
+  $('#nx-x').onclick = () => csvDownload(`NXT_${nxS.tu}_${nxS.den}.csv`, [['Mã', 'Tên hàng', 'Loại', 'ĐVT', 'Tồn đầu', 'Nhập', 'Xuất', 'Tồn cuối', 'Giá trị cuối'], ...rs.map(r => [r.item_code, itName(r.item_code), r.kind, itDvt(r.item_code), r.ton_dau, r.nhap, r.xuat, r.ton_cuoi, Math.round(r.gia_tri_cuoi)])]);
+};
+
+// ---------- CHỜ CEO DUYỆT ----------
+V.inbox = async () => {
+  const [O, P, Dx, S] = await Promise.all([qd(SB.from('orders').select('*, order_lines(qty,gia)').eq('status', 'cho_ceo')), qd(SB.from('production_orders').select('*').eq('status', 'cho_ceo')), qd(SB.from('defects').select('*').eq('status', 'cho_ceo')), qd(SB.from('stocktakes').select('*').eq('status', 'cho_ceo'))]);
+  const sec = (t, n, body) => `<div class="card" style="margin-bottom:14px"><h3>${t} (${n})</h3>${body || '<p class="note">Không có.</p>'}</div>`;
+  $('#view').innerHTML = `<p class="note" style="margin-top:0">Chỉ những việc vượt quy định mới lên đây; việc thường do GSV, Kế toán, Tổ trưởng tự duyệt.</p>
+  ${sec('Đơn hàng vượt chính sách', O.length, O.map(o => `<div class="alert"><span class="dot" style="background:var(--coral)"></span><span style="flex:1"><b>${esc(o.id)}</b> · ${esc(dlr(o.dealer_id)?.ten || o.dealer_id)} · ${vnd((o.order_lines || []).reduce((a, l) => a + l.qty * l.gia, 0) * (1 - o.ck_pct / 100))}<br><span class="note">${(o.vi_pham || []).map(esc).join(' · ')}</span></span><button class="btn sm" data-io="${esc(o.id)}">Xem</button></div>`).join(''))}
+  ${sec('Lệnh sản xuất chờ duyệt', P.length, P.map(p => `<div class="alert"><span class="dot" style="background:var(--amber)"></span><span style="flex:1"><b>${esc(p.id)}</b> · ${esc(prodName(p.sku))} · ${num(p.so_luong)} · ${num(p.kg_ke_hoach, 1)} kg, ${p.so_me} mẻ${p.from_order ? ' · cho đơn ' + esc(p.from_order) : ''}</span><button class="btn sm pri" data-ilsx="${esc(p.id)}">Duyệt lệnh</button></div>`).join(''))}
+  ${sec('Hàng lỗi chờ duyệt xử lý', Dx.length, Dx.map(d => `<div class="alert"><span class="dot" style="background:var(--amber)"></span><span style="flex:1"><b>${esc(d.id)}</b> · ${esc(d.nguon)} · ${num(d.qty)} · đề xuất <b>${esc(d.de_xuat)}</b></span><a class="btn sm" href="#defect">Xem</a></div>`).join(''))}
+  ${sec('Kiểm kê chờ duyệt', S.length, S.map(s => `<div class="alert"><span class="dot" style="background:var(--amber)"></span><span style="flex:1">${esc(s.ky)}</span><a class="btn sm" href="#count">Xem</a></div>`).join(''))}`;
+  $$('[data-io]').forEach(b => b.onclick = () => orderOpen(b.dataset.io));
+  $$('[data-ilsx]').forEach(b => b.onclick = async () => { const { error } = await SB.rpc('approve_lsx', { p_lsx: b.dataset.ilsx }); toast(error ? errMsg(error) : 'Đã duyệt ' + b.dataset.ilsx); V.inbox(); });
+};
+
+// ---------- MUA HÀNG ----------
+const POS = { de_nghi: ['Đề nghị', 'p-wait'], da_dat_ncc: ['Đã đặt NCC', 'p-info'], cho_iqc: ['Đã về – chờ IQC', 'p-info'], da_nhap_kho: ['Đã nhập kho', 'p-ok'], huy: ['Đã hủy', 'p-bad'] };
+let buyTab = 'po';
+V.buy = async () => {
+  const [P] = await Promise.all([qd(SB.from('purchase_orders').select('*').order('created_at', { ascending: false }).limit(300)), loadLots()]);
+  const open = P.filter(p => ['de_nghi', 'da_dat_ncc', 'cho_iqc'].includes(p.status));
+  const sug = (D.materials || []).filter(m => m.active !== false && +m.muc_bao_ton > 0).map(m => { const t = ton(m.ma), onway = open.filter(p => p.material_ma === m.ma).reduce((a, p) => a + +p.qty, 0); return { m, t, onway, need: Math.max(+m.ton_toi_da || 0, +m.muc_bao_ton * 2) - t - onway }; }).filter(x => x.t + x.onway < +x.m.muc_bao_ton);
+  const tabs = chipsHtml([['po', 'Đơn mua (PO)'], ['sug', `Đề xuất mua ${sug.length}`]], buyTab, 'byt');
+  const sup = id => D.suppliers?.find(s => s.id === id)?.ten || id || '';
+  if (buyTab === 'sug') {
+    $('#view').innerHTML = tabs + `<p class="note">Vật tư có tồn + hàng đang về thấp hơn mức báo tồn. Số đề xuất = đưa về tồn tối đa (hoặc 2 lần mức báo).</p><div class="scroll"><table class="stack"><thead><tr><th>Vật tư</th><th class="n">Tồn</th><th class="n">Đang về</th><th class="n">Mức báo</th><th class="n">Đề xuất mua</th><th>NCC chính</th><th></th></tr></thead><tbody>${sug.map(x => `<tr><td data-l="Vật tư"><b>${esc(x.m.ten)}</b><br><span class="note">${esc(x.m.ma)}</span></td><td class="n bad" data-l="Tồn">${num(x.t, 2)}</td><td class="n" data-l="Đang về">${num(x.onway, 2)}</td><td class="n" data-l="Mức báo">${num(x.m.muc_bao_ton)}</td><td class="n" data-l="Đề xuất"><b>${num(Math.max(x.need, +x.m.moq || 0), 2)} ${esc(x.m.dvt_kho)}</b></td><td data-l="NCC">${esc(sup(x.m.ncc_chinh))}</td><td>${can('buy', 'T') ? `<button class="btn sm pri" data-sp="${esc(x.m.ma)}|${Math.max(x.need, +x.m.moq || 0)}">Lập PO</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="7" class="note">Không có vật tư cần mua. (Cần điền "Tồn tối thiểu" trong danh mục NVL / bao bì.)</td></tr>'}</tbody></table></div>`;
+  } else {
+    $('#view').innerHTML = tabs + `<div class="row between" style="margin:10px 0"><p class="note" style="margin:0">Đề nghị → đặt NCC → hàng về (tạo IQC) → IQC đạt thì nhập kho. Mua lẻ nhập thẳng bằng phiếu Nhập kho → Nhập mua.</p>${can('buy', 'T') ? '<button class="btn pri" id="ponew">+ Lập PO</button>' : ''}</div>
+    <div class="scroll"><table class="stack"><thead><tr><th>PO</th><th>Vật tư</th><th class="n">Số lượng</th><th class="n">Đơn giá</th><th>NCC</th><th>Ngày về</th><th>Trạng thái</th><th></th></tr></thead><tbody>
+    ${P.map(p => `<tr><td data-l="PO"><b>${esc(p.id)}</b><br><span class="note">${ftime(p.created_at)}</span></td><td data-l="Vật tư">${esc(itName(p.material_ma))}</td><td class="n" data-l="SL">${num(p.qty, 2)} ${esc(itDvt(p.material_ma))}</td><td class="n" data-l="Đơn giá">${vnd(p.don_gia)}</td><td data-l="NCC">${esc(sup(p.supplier_id))}</td><td data-l="Ngày về">${fdate(p.eta)}</td><td><span class="pill ${POS[p.status]?.[1]}">${POS[p.status]?.[0]}</span></td><td>${p.status === 'de_nghi' && can('buy', 'T') ? `<button class="btn sm" data-pst="${esc(p.id)}|da_dat_ncc">Đã đặt NCC</button> <button class="btn sm" data-pst="${esc(p.id)}|huy">Hủy</button>` : ''}${p.status === 'da_dat_ncc' ? `<button class="btn sm pri" data-prc="${esc(p.id)}">Hàng về</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="8" class="note">Chưa có PO.</td></tr>'}</tbody></table></div>`;
+  }
+  $$('[data-byt]').forEach(b => b.onclick = () => { buyTab = b.dataset.byt; V.buy(); });
+  const poForm = (ma, q) => {
+    openSheet(`<div class="row between"><h2>Lập đơn mua (PO)</h2><button class="btn sm" id="close">Đóng</button></div><div class="field"><label for="po-m">Vật tư</label><div class="vitem"><input class="ac" id="po-m" value="${esc(ma ? itName(ma) : '')}" autocomplete="off" placeholder="Gõ tên NVL / bao bì…"><div class="acl" id="po-ml"></div></div></div>
+    <div class="f2"><div class="field"><label for="po-q">Số lượng</label><input id="po-q" type="number" step="any" value="${q || ''}"></div><div class="field"><label for="po-g">Đơn giá (để trống = giá chuẩn)</label><input id="po-g" type="number" step="any"></div>
+    <div class="field"><label for="po-s">Nhà cung cấp</label><select id="po-s"><option value="">— NCC chính —</option>${(D.suppliers || []).filter(s => s.active !== false).map(s => `<option value="${esc(s.id)}">${esc(s.ten)}</option>`).join('')}</select></div><div class="field"><label for="po-e">Ngày hàng về dự kiến</label><input id="po-e" type="date"></div></div><div class="err bad" id="po-x"></div><button class="btn pri" id="po-go">Lập PO</button>`);
+    acBox($('#po-m'), $('#po-ml'), () => items().filter(i => i.kind !== 'Thành phẩm').map(i => ({ ...i, s: i.code + ' ' + i.ten })), i => `<b>${esc(i.ten)}</b><span>${esc(i.code)} · tồn ${num(ton(i.code))}</span>`, i => { ma = i.code; $('#po-m').value = i.ten; });
+    $('#po-go').onclick = async () => { if (!ma) return $('#po-x').textContent = 'Chọn vật tư'; const { data, error } = await SB.rpc('create_po', { p_material: ma, p_qty: +$('#po-q').value, p_supplier: $('#po-s').value || null, p_gia: $('#po-g').value === '' ? null : +$('#po-g').value, p_eta: $('#po-e').value || null }); if (error) return $('#po-x').textContent = errMsg(error); closeSheet(); toast('Đã lập ' + data); buyTab = 'po'; V.buy(); };
+  };
+  $('#ponew') && ($('#ponew').onclick = () => poForm('', ''));
+  $$('[data-sp]').forEach(b => b.onclick = () => { const [m, q] = b.dataset.sp.split('|'); poForm(m, Math.ceil(+q)); });
+  $$('[data-pst]').forEach(b => b.onclick = async () => { const [id, s] = b.dataset.pst.split('|'); const { error } = await SB.from('purchase_orders').update({ status: s }).eq('id', id); toast(error ? errMsg(error) : 'Đã cập nhật'); V.buy(); });
+  $$('[data-prc]').forEach(b => b.onclick = () => { const p = P.find(x => x.id === b.dataset.prc);
+    openSheet(`<div class="row between"><h2>Nhận hàng ${esc(p.id)}</h2><button class="btn sm" id="close">Đóng</button></div><p>${esc(itName(p.material_ma))}</p><div class="f2"><div class="field"><label for="rc-l">Số lô NCC / lô nhập</label><input id="rc-l" value="${esc(p.material_ma.split('-').pop().slice(0, 3) + '-' + today().slice(2).replace(/-/g, ''))}"></div><div class="field"><label for="rc-q">Số lượng thực nhận</label><input id="rc-q" type="number" step="any" value="${p.qty}"></div></div><div class="err bad" id="rc-e"></div><button class="btn pri" id="rc-go">Xác nhận hàng về – tạo phiếu IQC</button>`);
+    $('#rc-go').onclick = async () => { const { error } = await SB.rpc('po_receive', { p_po: p.id, p_lot: $('#rc-l').value.trim(), p_qty: +$('#rc-q').value }); if (error) return $('#rc-e').textContent = errMsg(error); closeSheet(); toast('Hàng đã về, chờ IQC'); V.buy(); }; });
+};
+
+// ---------- GIAO VẬN ----------
+V.ship = async () => {
+  const [T, TO] = await Promise.all([qd(SB.from('trips').select('*').order('ngay', { ascending: false }).limit(200)), qd(SB.from('trip_orders').select('*'))]);
+  const ids = [...new Set(TO.map(t => t.order_id))], O = ids.length ? await qd(SB.from('orders').select('id,dealer_id,status,order_lines(qty,sku)').in('id', ids)) : [];
+  const kg = o => (o.order_lines || []).reduce((a, l) => a + l.qty * (+prod(l.sku)?.kg_moi_dv || 0), 0), ym = today().slice(0, 7);
+  const byC = {}; T.filter(t => String(t.ngay).slice(0, 7) === ym).forEach(t => { const k = (D.carriers || []).find(c => c.id === t.carrier_id)?.ten || 'Khác'; byC[k] = (byC[k] || 0) + +t.cuoc; });
+  $('#view').innerHTML = `<div class="tiles">${Object.entries(byC).map(([k, v]) => `<div class="tile"><span>Cước tháng · ${esc(k)}</span><b>${vnd(v)}</b></div>`).join('') || '<div class="tile"><span>Cước tháng</span><b>0 đ</b></div>'}</div>
+  <div class="scroll"><table class="stack"><thead><tr><th>Chuyến</th><th>Ngày</th><th>Nhà xe / xe</th><th>Đơn hàng</th><th class="n">Tải (kg)</th><th class="n">Cước</th><th>Trạng thái</th></tr></thead><tbody>
+  ${T.map(t => { const os = TO.filter(x => x.trip_id === t.id).map(x => O.find(o => o.id === x.order_id)).filter(Boolean); return `<tr><td data-l="Chuyến"><b>${esc(t.id)}</b></td><td data-l="Ngày">${fdate(t.ngay)}</td><td data-l="Xe">${esc((D.carriers || []).find(c => c.id === t.carrier_id)?.ten || '')} ${esc(t.bien_so || '')}<br><span class="note">${esc(t.tai_trong || '')}</span></td><td data-l="Đơn">${os.map(o => `${esc(o.id)} · ${esc(dlr(o.dealer_id)?.ten || '')}`).join('<br>')}</td><td class="n" data-l="Tải">${num(os.reduce((a, o) => a + kg(o), 0))}</td><td class="n" data-l="Cước">${['ke_toan', 'ceo'].includes(ME.role) ? `<input type="number" data-tc="${esc(t.id)}" value="${+t.cuoc || 0}" style="${inputCss};width:120px;text-align:right">` : vnd(t.cuoc)}</td><td>${['ke_toan', 'ceo'].includes(ME.role) ? `<select data-ts="${esc(t.id)}" style="${inputCss}">${['Chờ xuất kho', 'Đang giao', 'Đã giao', 'Hủy'].map(s => `<option ${s === t.status ? 'selected' : ''}>${s}</option>`).join('')}</select>` : esc(t.status)}${t.anh_bien_ban ? `<br><span class="note">${esc(t.anh_bien_ban)}</span>` : ''}</td></tr>`; }).join('') || '<tr><td colspan="7" class="note">Chưa có chuyến. Chuyến tạo khi Kế toán xếp xe cho đơn hàng.</td></tr>'}</tbody></table></div>`;
+  $$('[data-tc]').forEach(i => i.onchange = async () => { const { error } = await SB.from('trips').update({ cuoc: +i.value }).eq('id', i.dataset.tc); toast(error ? errMsg(error) : 'Đã lưu cước'); });
+  $$('[data-ts]').forEach(i => i.onchange = async () => { const { error } = await SB.from('trips').update({ status: i.value }).eq('id', i.dataset.ts); toast(error ? errMsg(error) : 'Đã cập nhật'); });
+};
+
+// ---------- XUẤT DỮ LIỆU MISA ----------
+let msS = { tu: today().slice(0, 8) + '01', den: today() };
+V.misa = async () => {
+  $('#view').innerHTML = `<div class="card"><h3>Xuất dữ liệu sang MISA</h3><p class="note" style="margin-top:-6px">Tải file CSV (mở bằng Excel), chỉnh cột theo mẫu nhập khẩu MISA của công ty rồi nhập vào MISA. Khi có mẫu MISA chính thức, đội triển khai sẽ khớp cột tự động.</p>
+  <div class="row" style="margin:10px 0"><label>Từ <input type="date" id="ms-a" value="${msS.tu}" style="${inputCss}"></label><label>Đến <input type="date" id="ms-b" value="${msS.den}" style="${inputCss}"></label></div>
+  <div class="row"><button class="btn pri" data-ms="hd">Hóa đơn bán hàng</button><button class="btn" data-ms="thu">Phiếu thu</button><button class="btn" data-ms="kho">Phiếu nhập / xuất kho</button><button class="btn" data-ms="kh">Danh mục khách hàng</button><button class="btn" data-ms="vt">Danh mục vật tư, hàng hóa</button></div><div class="note" id="ms-n" style="margin-top:10px"></div></div>`;
+  const rng = () => { msS.tu = $('#ms-a').value; msS.den = $('#ms-b').value; return [msS.tu, msS.den]; };
+  $$('[data-ms]').forEach(b => b.onclick = async () => {
+    const [a, z] = rng(), k = b.dataset.ms, n = $('#ms-n'); n.textContent = 'Đang lấy dữ liệu…';
+    if (k === 'hd') { const I = await qd(SB.from('invoices').select('*').gte('ngay', a).lte('ngay', z)); const oids = I.map(i => i.order_id).filter(Boolean), OL = oids.length ? await qd(SB.from('order_lines').select('*').in('order_id', oids)) : [], O = oids.length ? await qd(SB.from('orders').select('id,ck_pct').in('id', oids)) : [];
+      const rows = [['Ngày hóa đơn', 'Số hóa đơn', 'Mã khách hàng', 'Tên khách hàng', 'Mã số thuế', 'Địa chỉ', 'Mã hàng', 'Tên hàng', 'ĐVT', 'Số lượng', 'Đơn giá', 'Thành tiền', 'Tỷ lệ CK (%)', 'Tiền CK', 'Hạn thanh toán', 'Số đơn hàng']];
+      I.forEach(i => { const d = dlr(i.dealer_id) || {}, ck = +O.find(o => o.id === i.order_id)?.ck_pct || 0; OL.filter(l => l.order_id === i.order_id).forEach(l => rows.push([i.ngay, i.id, i.dealer_id, d.ten, d.mst, d.dia_chi, l.sku, prodName(l.sku), prod(l.sku)?.dvt, l.qty, l.gia, l.qty * l.gia, ck, Math.round(l.qty * l.gia * ck / 100), i.han_tt, i.order_id])); });
+      csvDownload(`MISA_HoaDon_${a}_${z}.csv`, rows); if (I.length) await SB.from('invoices').update({ misa_xuat_luc: new Date().toISOString() }).in('id', I.map(i => i.id)); n.textContent = `Đã xuất ${I.length} hóa đơn.`; }
+    if (k === 'thu') { const R = await qd(SB.from('receipts').select('*').gte('ngay', a).lte('ngay', z)); csvDownload(`MISA_PhieuThu_${a}_${z}.csv`, [['Ngày', 'Mã khách hàng', 'Tên khách hàng', 'Số tiền', 'Diễn giải'], ...R.map(r => [r.ngay, r.dealer_id, dlr(r.dealer_id)?.ten, r.so_tien, r.ghi_chu])]); n.textContent = `Đã xuất ${R.length} phiếu thu.`; }
+    if (k === 'kho') { const Dc = await qd(SB.from('stock_docs').select('*').gte('ngay', a).lte('ngay', z).neq('status', 'da_huy')), ids = Dc.map(d => d.id), M = ids.length ? await qd(SB.from('stock_moves').select('doc_id,qty,don_gia,loai,stock_lots(item_code,lot_code,location_id)').in('doc_id', ids)) : [];
+      csvDownload(`MISA_PhieuKho_${a}_${z}.csv`, [['Ngày', 'Số phiếu', 'Loại phiếu', 'Đối tượng', 'Mã đối tượng', 'Mã hàng', 'Tên hàng', 'ĐVT', 'Lô', 'Kho / vị trí', 'Số lượng', 'Đơn giá', 'Thành tiền', 'Chứng từ gốc'], ...M.filter(m => !(m.loai === 'chuyen_kho' && m.qty > 0)).map(m => { const d = Dc.find(x => x.id === m.doc_id); return [d.ngay, d.id, d.loai, d.doi_tuong_ten, d.doi_tuong_id, m.stock_lots?.item_code, itName(m.stock_lots?.item_code), itDvt(m.stock_lots?.item_code), m.stock_lots?.lot_code, m.stock_lots?.location_id, Math.abs(m.qty), m.don_gia, Math.round(Math.abs(m.qty) * (+m.don_gia || 0)), d.ref]; })]); n.textContent = `Đã xuất ${Dc.length} phiếu kho.`; }
+    if (k === 'kh') { csvDownload('MISA_KhachHang.csv', [['Mã khách hàng', 'Tên khách hàng', 'Địa chỉ', 'Mã số thuế', 'Điện thoại', 'Người liên hệ', 'Tỉnh', 'Hạn nợ (ngày)', 'Hạn mức nợ'], ...(D.dealers || []).map(d => [d.id, d.ten, d.dia_chi, d.mst, d.sdt, d.dai_dien, d.tinh, d.han_no_ngay, d.han_muc])]); n.textContent = 'Đã xuất danh mục khách hàng.'; }
+    if (k === 'vt') { csvDownload('MISA_VatTuHangHoa.csv', [['Mã', 'Tên', 'Loại', 'ĐVT', 'Giá bán', 'Giá vốn / giá nhập chuẩn'], ...items().map(i => [i.code, i.ten, i.kind, i.dvt, i.gia_ban || '', i.gia_von])]); n.textContent = 'Đã xuất danh mục vật tư, hàng hóa.'; }
+  });
+};
+
+// ---------- GIÁ THÀNH & CHI PHÍ ----------
+let cstS = { tu: today().slice(0, 8) + '01', den: today() };
+V.cost = async () => {
+  const P = await qd(SB.from('production_orders').select('*').eq('status', 'hoan_thanh').gte('created_at', cstS.tu).lte('created_at', cstS.den + 'T23:59:59'));
+  const ids = P.map(p => p.id), M = ids.length ? await qd(SB.from('stock_moves').select('ref_id,qty,lot_id,stock_lots(item_code,don_gia)').eq('ref_type', 'lsx').eq('loai', 'xuat_sx').in('ref_id', ids)) : [];
+  const rows = P.map(p => { const ms = M.filter(m => m.ref_id === p.id), nvlKg = ms.filter(m => item(m.stock_lots?.item_code)?.kind === 'NVL').reduce((a, m) => a - +m.qty, 0), cost = ms.reduce((a, m) => a - m.qty * (+m.stock_lots?.don_gia || 0), 0), q = +p.so_luong_thuc || +p.so_luong, pr = prod(p.sku) || {}, outKg = q * (+pr.kg_moi_dv || 0); return { p, pr, q, cost, unit: q ? cost / q : 0, hh: nvlKg ? (nvlKg - outKg) / nvlKg * 100 : 0, margin: +pr.gia_ban ? (1 - (q ? cost / q : 0) / pr.gia_ban) * 100 : null }; });
+  $('#view').innerHTML = `<div class="row" style="margin-bottom:10px"><label>Từ <input type="date" id="cs-a" value="${cstS.tu}" style="${inputCss}"></label><label>Đến <input type="date" id="cs-b" value="${cstS.den}" style="${inputCss}"></label></div>
+  <div class="scroll"><table class="stack"><thead><tr><th>Lệnh / lô</th><th>Sản phẩm</th><th class="n">SL thực</th><th class="n">Chi phí NVL + bao bì</th><th class="n">Giá thành / ĐV</th><th class="n">Giá bán</th><th class="n">Biên lãi gộp</th><th class="n">Hao hụt thực</th></tr></thead><tbody>
+  ${rows.map(r => `<tr><td data-l="Lệnh"><b>${esc(r.p.id)}</b><br><span class="note">lô ${esc(r.p.lot_code || '')}</span></td><td data-l="SP">${esc(r.pr.ten || r.p.sku)}</td><td class="n" data-l="SL">${num(r.q, 2)} ${esc(r.pr.dvt || '')}</td><td class="n" data-l="Chi phí">${vnd(r.cost)}</td><td class="n" data-l="Giá thành"><b>${vnd(r.unit)}</b></td><td class="n" data-l="Giá bán">${vnd(r.pr.gia_ban)}</td><td class="n ${r.margin != null && r.margin < 10 ? 'bad' : ''}" data-l="Biên">${r.margin == null ? '' : num(r.margin, 1) + '%'}</td><td class="n ${r.hh > 3 ? 'bad' : ''}" data-l="Hao hụt">${num(r.hh, 2)}%</td></tr>`).join('') || '<tr><td colspan="8" class="note">Chưa có lệnh sản xuất hoàn thành trong kỳ.</td></tr>'}</tbody></table></div>
+  <p class="note">Giá thành hiện tính chi phí nguyên vật liệu và bao bì thực xuất theo lô (giá nhập của từng lô). Nhân công, điện, khấu hao chưa phân bổ. Hao hụt thực = (kg NVL xuất − kg thành phẩm) / kg NVL xuất.</p>`;
+  $('#cs-a').onchange = $('#cs-b').onchange = () => { cstS.tu = $('#cs-a').value; cstS.den = $('#cs-b').value; V.cost(); };
+};
+
+// ---------- ĐI TUYẾN & ẢNH ----------
+async function compressImg(file, max = 1280, q = 0.7) {
+  const img = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = URL.createObjectURL(file); });
+  const s = Math.min(1, max / Math.max(img.width, img.height)), c = document.createElement('canvas'); c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+  const g = c.getContext('2d'); g.drawImage(img, 0, 0, c.width, c.height); g.font = `${Math.max(14, c.width / 40)}px sans-serif`; g.fillStyle = '#fff'; g.strokeStyle = '#000'; g.lineWidth = 3;
+  const stamp = new Date().toLocaleString('vi-VN') + ' · ' + (ME.ho_ten || ''); g.strokeText(stamp, 12, c.height - 14); g.fillText(stamp, 12, c.height - 14);
+  return await new Promise(ok => c.toBlob(ok, 'image/jpeg', q));
+}
+let rtS = { ngay: today() };
+V.route = async () => {
+  const mine = ME.role === 'nvkd', Vs = await qd(SB.from('visits').select('*').eq('ngay', rtS.ngay).order('tai_luc', { ascending: false }));
+  const urls = {}; await Promise.all(Vs.filter(v => v.anh_path).map(async v => { const { data } = await SB.storage.from('anh').createSignedUrl(v.anh_path, 3600); urls[v.id] = data?.signedUrl; }));
+  $('#view').innerHTML = `<div class="row between" style="margin-bottom:10px"><label>Ngày <input type="date" id="rt-d" value="${rtS.ngay}" style="${inputCss}"></label>${mine ? '<button class="btn pri" id="rt-new">📷 Ghé thăm đại lý</button>' : ''}</div>
+  <div class="grid g2">${Vs.map(v => `<div class="card"><div class="row between"><b>${esc(dlr(v.dealer_id)?.ten || v.dealer_id)}</b><span class="note">${ftime(v.tai_luc)}</span></div><div class="note">${esc(userName(v.nvkd_id))}</div>${urls[v.id] ? `<img src="${urls[v.id]}" alt="Ảnh ghé thăm" style="width:100%;border-radius:8px;margin-top:8px">` : ''}${v.ket_qua ? `<p>${esc(v.ket_qua)}</p>` : ''}</div>`).join('') || '<p class="note">Chưa có lượt ghé thăm trong ngày.</p>'}</div>`;
+  $('#rt-d').onchange = () => { rtS.ngay = $('#rt-d').value; V.route(); };
+  $('#rt-new') && ($('#rt-new').onclick = () => {
+    const dls = (D.dealers || []).filter(d => d.active !== false);
+    openSheet(`<div class="row between"><h2>Ghé thăm đại lý</h2><button class="btn sm" id="close">Đóng</button></div><div class="field"><label for="vs-d">Đại lý</label><input id="vs-d" list="vs-dl" autocomplete="off" placeholder="Gõ tên đại lý…"><datalist id="vs-dl">${dls.map(d => `<option value="${esc(d.ten)}">${esc(d.id)}</option>`).join('')}</datalist></div>
+    <div class="field"><label for="vs-f">Ảnh tại điểm bán (chụp trực tiếp)</label><input id="vs-f" type="file" accept="image/*" capture="environment"></div><div class="field"><label for="vs-k">Kết quả / ghi chú</label><input id="vs-k" placeholder="vd: đặt 50 bao NPK, hỏi giá Kali"></div><div class="err bad" id="vs-e"></div><button class="btn pri" id="vs-go">Lưu lượt ghé thăm</button>`);
+    $('#vs-go').onclick = async () => {
+      const d = dls.find(x => x.ten === $('#vs-d').value.trim() || x.id === $('#vs-d').value.trim()), f = $('#vs-f').files[0], e = t => $('#vs-e').textContent = t;
+      if (!d) return e('Chọn đại lý trong danh sách'); if (!f) return e('Chụp ảnh tại điểm bán'); $('#vs-go').disabled = true;
+      try { const blob = await compressImg(f), path = `${ME.id}/${today()}/${Date.now()}.jpg`; const up = await SB.storage.from('anh').upload(path, blob, { contentType: 'image/jpeg' }); if (up.error) throw up.error;
+        const { error } = await SB.from('visits').insert({ offline_id: crypto.randomUUID?.(), nvkd_id: ME.id, dealer_id: d.id, anh_path: path, tai_luc: new Date().toISOString(), ket_qua: $('#vs-k').value.trim() || null }); if (error) throw error;
+        closeSheet(); toast('Đã lưu lượt ghé thăm'); V.route(); } catch (x) { $('#vs-go').disabled = false; e(errMsg(x)); }
+    };
+  });
+};
+
+// ---------- KPI ----------
+V.kpi = async () => {
+  const ym = today().slice(0, 7), [K, TG, O, EV, VS] = await Promise.all([qd(SB.from('kpi_criteria').select('*').order('role')), qd(SB.from('sales_targets').select('*').eq('thang', ym)), qd(SB.from('orders').select('id,nvkd_id,ck_pct,order_lines(qty,gia)').neq('status', 'huy')), qd(SB.from('order_events').select('order_id,ts').like('action', 'Xuất kho%').gte('ts', ym + '-01')), qd(SB.from('visits').select('nvkd_id,ngay').gte('ngay', ym + '-01'))]);
+  const OM = Object.fromEntries(O.map(o => [o.id, o])), rev = {}; EV.forEach(e => { const o = OM[e.order_id]; if (o) rev[o.nvkd_id] = (rev[o.nvkd_id] || 0) + (o.order_lines || []).reduce((a, l) => a + l.qty * l.gia, 0) * (1 - o.ck_pct / 100); });
+  const nvs = (D.profiles || []).filter(p => p.role === 'nvkd' && p.active !== false && (ME.role !== 'nvkd' || p.id === ME.id));
+  $('#view').innerHTML = `<div class="card" style="margin-bottom:14px"><h3>Kết quả tháng ${ym.slice(5)}/${ym.slice(0, 4)}</h3><div class="scroll"><table class="stack"><thead><tr><th>NVKD</th><th class="n">Doanh thu (đã xuất)</th><th class="n">Mục tiêu</th><th class="n">% đạt</th><th class="n">Lượt ghé thăm</th></tr></thead><tbody>${nvs.map(p => { const r = rev[p.id] || 0, t = +TG.find(x => x.ma === p.id)?.doanh_thu || 0; return `<tr><td data-l="NVKD">${esc(p.ho_ten)}</td><td class="n" data-l="Doanh thu">${vnd(r)}</td><td class="n" data-l="Mục tiêu">${t ? vnd(t) : '—'}</td><td class="n ${t && r / t < .6 ? 'bad' : ''}" data-l="% đạt">${t ? Math.round(r / t * 100) + '%' : ''}</td><td class="n" data-l="Ghé thăm">${VS.filter(v => v.nvkd_id === p.id).length}</td></tr>`; }).join('') || '<tr><td colspan="5" class="note">Chưa có NVKD.</td></tr>'}</tbody></table></div><p class="note">Mục tiêu đặt ở Tổng quan điều hành → "Đặt kế hoạch doanh thu".</p></div>
+  <div class="card"><div class="row between"><h3 style="margin:0">Bộ tiêu chí KPI theo vai trò</h3>${ME.role === 'ceo' ? '<button class="btn sm pri" id="kn">+ Tiêu chí</button>' : ''}</div><div class="scroll"><table class="stack" style="margin-top:8px"><thead><tr><th>Vai trò</th><th>Tiêu chí</th><th class="n">Trọng số</th><th>Mục tiêu</th><th>Nguồn số liệu</th></tr></thead><tbody>${K.map(k => `<tr class="${ME.role === 'ceo' ? 'click' : ''} ${k.active === false ? 'off' : ''}" data-kid="${k.id}"><td data-l="Vai trò">${RN[k.role] || k.role}</td><td data-l="Tiêu chí">${esc(k.tieu_chi)}</td><td class="n" data-l="Trọng số">${num(k.trong_so)}%</td><td data-l="Mục tiêu">${esc(k.muc_tieu || '')}</td><td data-l="Nguồn">${esc(k.nguon || '')}</td></tr>`).join('') || '<tr><td colspan="5" class="note">Chưa có tiêu chí.</td></tr>'}</tbody></table></div></div>`;
+  const kf = k => { const isNew = !k; k = k || { role: 'nvkd', trong_so: 0, active: true };
+    openSheet(`<div class="row between"><h2>${isNew ? 'Thêm' : 'Sửa'} tiêu chí KPI</h2><button class="btn sm" id="close">Đóng</button></div><div class="f2"><div class="field"><label for="k-r">Vai trò</label><select id="k-r">${Object.keys(RN).map(r => `<option value="${r}" ${r === k.role ? 'selected' : ''}>${RN[r]}</option>`).join('')}</select></div><div class="field"><label for="k-w">Trọng số (%)</label><input id="k-w" type="number" value="${k.trong_so ?? ''}"></div><div class="field full"><label for="k-t">Tiêu chí</label><input id="k-t" value="${esc(k.tieu_chi || '')}"></div><div class="field"><label for="k-m">Mục tiêu</label><input id="k-m" value="${esc(k.muc_tieu || '')}"></div><div class="field"><label for="k-n">Nguồn số liệu</label><input id="k-n" value="${esc(k.nguon || '')}" placeholder="vd: Doanh thu đã xuất"></div></div>${!isNew ? `<label class="chk"><input type="checkbox" id="k-a" ${k.active !== false ? 'checked' : ''}> Đang dùng</label>` : ''}<div class="err bad" id="k-e"></div><button class="btn pri" id="k-go">Lưu</button>`);
+    $('#k-go').onclick = async () => { const o = { role: $('#k-r').value, trong_so: +$('#k-w').value || 0, tieu_chi: $('#k-t').value.trim(), muc_tieu: $('#k-m').value.trim() || null, nguon: $('#k-n').value.trim() || null }; if (!o.tieu_chi) return $('#k-e').textContent = 'Nhập tiêu chí'; if (!isNew) o.active = $('#k-a').checked; const r = isNew ? await SB.from('kpi_criteria').insert(o) : await SB.from('kpi_criteria').update(o).eq('id', k.id); if (r.error) return $('#k-e').textContent = errMsg(r.error); closeSheet(); V.kpi(); }; };
+  $('#kn') && ($('#kn').onclick = () => kf(null));
+  $$('[data-kid]').forEach(tr => ME.role === 'ceo' && (tr.onclick = () => kf(K.find(k => k.id === +tr.dataset.kid))));
+};
+
+// ---------- CHẤM CÔNG ----------
+V.hr = async () => {
+  const ym = today().slice(0, 7), all = ['ceo', 'ke_toan'].includes(ME.role);
+  const A = await qd(SB.from('attendance').select('*').gte('ts', ym + '-01').order('ts', { ascending: false }).limit(5000));
+  const mineToday = A.filter(a => a.user_id === ME.id && new Date(new Date(a.ts).getTime() + 7 * 3600e3).toISOString().slice(0, 10) === today());
+  const lastIn = mineToday.find(a => a.loai === 'Vào ca'), lastOut = mineToday.find(a => a.loai === 'Ra ca');
+  const dayKey = a => new Date(new Date(a.ts).getTime() + 7 * 3600e3).toISOString().slice(0, 10);
+  const sum = {}; A.forEach(a => { const k = a.user_id; sum[k] ||= { days: new Set(), ins: 0 }; if (a.loai === 'Vào ca') sum[k].days.add(dayKey(a)); });
+  $('#view').innerHTML = `${ME.role !== 'dai_ly' ? `<div class="card" style="margin-bottom:14px"><h3>Chấm công hôm nay ${fdate(today())}</h3><p>${lastIn ? 'Vào ca lúc <b>' + ftime(lastIn.ts) + '</b>' : 'Chưa vào ca'}${lastOut ? ' · Ra ca lúc <b>' + ftime(lastOut.ts) + '</b>' : ''}</p><div class="row"><button class="btn pri" data-att="Vào ca">Vào ca</button><button class="btn" data-att="Ra ca">Ra ca</button></div></div>` : ''}
+  ${all ? `<div class="card"><div class="row between"><h3 style="margin:0">Tổng hợp công tháng ${ym.slice(5)}/${ym.slice(0, 4)}</h3><button class="btn sm" id="hr-x">Tải Excel (CSV)</button></div><div class="scroll"><table class="stack" style="margin-top:8px"><thead><tr><th>Nhân viên</th><th>Vai trò</th><th class="n">Số ngày công</th></tr></thead><tbody>${(D.profiles || []).filter(p => p.role !== 'dai_ly' && p.active !== false).map(p => `<tr><td data-l="Nhân viên">${esc(p.ho_ten)}</td><td data-l="Vai trò">${esc(rl(p))}</td><td class="n" data-l="Ngày công">${sum[p.id]?.days.size || 0}</td></tr>`).join('')}</tbody></table></div></div>` :
+    `<div class="card"><h3>Lịch sử của tôi tháng này</h3>${A.filter(a => a.user_id === ME.id).map(a => `<div class="alert"><span>${ftime(a.ts)}</span><span>${esc(a.loai)}</span></div>`).join('') || '<p class="note">Chưa có.</p>'}</div>`}`;
+  $$('[data-att]').forEach(b => b.onclick = async () => { const { error } = await SB.from('attendance').insert({ offline_id: crypto.randomUUID?.(), user_id: ME.id, loai: b.dataset.att }); toast(error ? errMsg(error) : b.dataset.att + ' lúc ' + new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })); V.hr(); });
+  $('#hr-x') && ($('#hr-x').onclick = () => csvDownload(`ChamCong_${ym}.csv`, [['Nhân viên', 'Vai trò', 'Ngày', 'Vào ca', 'Ra ca'], ...(D.profiles || []).flatMap(p => [...(sum[p.id]?.days || [])].sort().map(d => { const r = A.filter(a => a.user_id === p.id && dayKey(a) === d); return [p.ho_ten, rl(p), d, ftime(r.filter(a => a.loai === 'Vào ca').at(-1)?.ts), ftime(r.find(a => a.loai === 'Ra ca')?.ts)]; }))]));
+};
 
 // ---------- khởi động ----------
 (async () => {
