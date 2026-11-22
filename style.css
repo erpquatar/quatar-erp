@@ -164,3 +164,15 @@ tr.click{cursor:pointer}tr.click:hover td{background:var(--panel)}
 .vitem input.ac{border:1px solid var(--line);border-radius:8px;padding:9px 10px;min-height:42px;background:var(--bg)}
 @media print{.rail,.top,.subtabs,.drawer,.toast{display:none!important}.app{display:block;background:none}}
 .g3{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+/* không để chữ bị cắt: menu, tiêu đề, ô số liệu được xuống dòng */
+.nav a,.sub a{white-space:normal;line-height:1.35}
+.tile{min-width:0}.tile b{white-space:normal;overflow-wrap:anywhere}
+.tile.click,.alert.click{cursor:pointer}.tile.click:hover{outline:1px solid var(--leaf)}
+.hb span:first-child{overflow-wrap:anywhere}
+h1{overflow-wrap:anywhere}
+.chip{max-width:100%}
+td,th{overflow-wrap:anywhere}
+.pill{white-space:nowrap}
+@media(max-width:860px){.subtabs a{white-space:nowrap}}
+@media(max-width:860px){.app{grid-template-rows:auto 1fr;align-content:start}.nav{flex-wrap:wrap;overflow-x:visible;gap:4px}.dept{padding:7px 10px;font-size:14px}.subtabs{flex-wrap:wrap;overflow-x:visible}.subtabs a{white-space:normal}}
+.hb{grid-template-columns:minmax(6em,9em) minmax(0,1fr) auto}.hb span:last-child{white-space:nowrap;min-width:3.4em}

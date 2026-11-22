@@ -3,7 +3,7 @@ const CFG = {
   url: 'https://qfjarxoymmabropgscek.supabase.co',
   key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFmamFyeG95bW1hYnJvcGdzY2VrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTUzMTU1NTgsImV4cCI6MjExMDg5MTU1OH0._ccBX9tTCE_0WxhgkP6hqpmRaTbM3bK5G6L3vExTafo',
   domain: 'erp.quatar.vn',
-  version: '0.4 · 22/11/2026'
+  version: '0.5 · 22/11/2026'
 };
 const SB = window.__SB_MOCK || (await import('https://esm.sh/@supabase/supabase-js@2.45.4')).createClient(CFG.url, CFG.key);
 
@@ -42,7 +42,7 @@ const DEPTS = [
   ['dm', 'Danh mục', '<path d="M4 5h16M4 12h16M4 19h10"/><circle cx="19" cy="19" r="2"/>'],
   ['ht', 'Nhân sự – Hệ thống', '<circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/>']];
 const VIEWS = {
-  dash: { t: 'Tổng quan & thiết lập', g: 'dh' }, inbox: { t: 'Chờ CEO duyệt', g: 'dh' }, cost: { t: 'Giá thành & chi phí', g: 'dh' },
+  dash: { t: 'Tổng quan điều hành', g: 'dh' }, inbox: { t: 'Chờ CEO duyệt', g: 'dh' }, cost: { t: 'Giá thành & chi phí', g: 'dh' },
   orders: { t: 'Đơn hàng', g: 'kd' }, dealers: { t: 'Đại lý & công nợ', g: 'kd' }, route: { t: 'Đi tuyến & ảnh', g: 'kd' }, policy: { t: 'Chính sách giá, CK, thưởng vụ', g: 'kd' }, kpi: { t: 'KPI', g: 'kd' },
   buy: { t: 'Mua hàng', g: 'kt' }, ship: { t: 'Giao vận – xe thuê', g: 'kt' }, misa: { t: 'Xuất dữ liệu MISA', g: 'kt' },
   stock: { t: 'Tồn kho & vị trí', g: 'kho' }, nhap: { t: 'Nhập kho', g: 'kho' }, xuat: { t: 'Xuất kho', g: 'kho' }, chuyen: { t: 'Điều chuyển kho, vị trí', g: 'kho' },
@@ -160,27 +160,80 @@ function placeholder() {
 
 // ---------- Tổng quan & thiết lập ----------
 V.dash = async () => {
-  await loadLots();
-  const val = LOTS.reduce((a, l) => a + (+l.qty || 0) * (+l.don_gia || 0), 0);
-  const steps = [
-    ['dm_kho', 'Kho & vị trí lưu', (D.locations || []).filter(l => !isQuar(l.id)).length, 'vị trí'],
-    ['dm_chung', 'Danh mục chung (ĐVT, vùng, nhóm hàng, bộ phận)', (D.units || []).length, 'ĐVT'],
-    ['dm_ncc', 'Nhà cung cấp', (D.suppliers || []).length, 'NCC'],
-    ['dm_nvl', 'Nguyên vật liệu', (D.materials || []).filter(m => m.loai === 'NVL').length, 'mã'],
-    ['dm_bb', 'Bao bì', (D.materials || []).filter(m => m.loai === 'Bao bì').length, 'mã'],
-    ['dm_tp', 'Thành phẩm', (D.products || []).length, 'SKU'],
-    ['dm_kh', 'Khách hàng / đại lý', (D.dealers || []).length, 'khách'],
-    ['perm', 'Tài khoản người dùng', (D.profiles || []).length, 'tài khoản'],
-    ['nhap', 'Tồn đầu kỳ (phiếu Nhập khác – Tồn đầu kỳ)', LOTS.length, 'lô đang tồn']];
-  $('#view').innerHTML = `<div class="grid g3" style="margin-bottom:16px">
-   <div class="card"><div class="note">Giá trị tồn kho</div><div style="font-size:24px;font-weight:700">${vnd(val)}</div></div>
-   <div class="card"><div class="note">Mặt hàng đang có tồn</div><div style="font-size:24px;font-weight:700">${num(new Set(LOTS.map(l => l.item_code)).size)}</div></div>
-   <div class="card"><div class="note">Người dùng đang hoạt động</div><div style="font-size:24px;font-weight:700">${num((D.profiles || []).filter(p => p.active !== false).length)}</div></div></div>
-  <div class="card"><h3>Các bước thiết lập ban đầu</h3><p class="note" style="margin-top:-6px">Làm lần lượt từ trên xuống. Danh mục phải có trước thì phiếu kho và đơn hàng mới chọn được.</p>
-  <table><tbody>${steps.map(([v, t, n, u], i) => `<tr class="${PERM[v] ? 'click' : ''}" data-go="${PERM[v] ? v : ''}"><td style="width:28px"><span class="vno">${i + 1}</span></td><td>${t}</td><td class="n">${n ? `<span class="ok">${num(n)} ${u}</span>` : '<span class="pill p-wait">Chưa có</span>'}</td></tr>`).join('')}</tbody></table></div>
-  <p class="note">Phiên bản ${CFG.version}. Các phân hệ còn lại (đơn hàng, sản xuất, mua hàng, giao vận…) sẽ lần lượt được bật.</p>`;
-  $$('[data-go]').forEach(r => r.dataset.go && (r.onclick = () => location.hash = r.dataset.go));
+  const now = new Date(Date.now() + 7 * 3600e3), ym = now.toISOString().slice(0, 7), d1 = ym + '-01', dToday = +now.toISOString().slice(8, 10), ops = opsRole();
+  const q = (p) => Promise.resolve(p).then(r => r.data || [], () => []);
+  const [ords, evs, inv, tg, lsx] = await Promise.all([
+    q(SB.from('orders').select('*, order_lines(qty,gia)').neq('status', 'huy').order('created_at', { ascending: false }).limit(2000)),
+    q(SB.from('order_events').select('order_id,ts,action').like('action', 'Xuất kho%').gte('ts', d1)),
+    q(SB.from('invoices').select('*')), q(SB.from('sales_targets').select('*').eq('thang', ym)),
+    ME.role === 'ceo' ? q(SB.from('production_orders').select('id,sku,so_luong,status').eq('status', 'cho_ceo')) : []]);
+  await Promise.all([loadDebt(), ops ? loadLots() : null]);
+  const tot = o => (o.order_lines || []).reduce((a, l) => a + l.qty * l.gia, 0) * (1 - (+o.ck_pct || 0) / 100), OM = Object.fromEntries(ords.map(o => [o.id, o]));
+  // Doanh thu = giá trị đơn đã xuất kho trong tháng (theo ngày xuất)
+  const ship = {}; evs.forEach(e => { if (OM[e.order_id] && !ship[e.order_id]) ship[e.order_id] = e.ts; });
+  const days = Array.from({ length: dToday }, (_, i) => ({ d: i + 1, v: 0 })), byNv = {};
+  let rev = 0; Object.entries(ship).forEach(([id, ts]) => { const o = OM[id], v = tot(o), dd = +new Date(new Date(ts).getTime() + 7 * 3600e3).toISOString().slice(8, 10); rev += v; if (days[dd - 1]) days[dd - 1].v += v; byNv[o.nvkd_id || '-'] = (byNv[o.nvkd_id || '-'] || 0) + v; });
+  const newM = ords.filter(o => String(o.created_at) >= d1 && !['tra_lai'].includes(o.status)), booked = newM.reduce((a, o) => a + tot(o), 0);
+  const target = +tg.find(t => t.ma === 'ALL')?.doanh_thu || 0, perDay = target ? target / 26 : 0;
+  const wait = { gsv: ords.filter(o => o.status === 'cho_gsv').length, kt: ords.filter(o => o.status === 'cho_kt').length, ceo: ords.filter(o => o.status === 'cho_ceo').length };
+  const debtRows = Object.values(DEBT), du = debtRows.reduce((a, r) => a + (+r.du_no || 0), 0), qh = debtRows.reduce((a, r) => a + (+r.qua_han_tien || 0), 0);
+  const td = today(), ageB = [0, 0, 0]; inv.forEach(i => { const rem = (+i.so_tien || 0) - (+i.da_thu || 0); if (rem <= 0) return; const late = Math.floor((new Date(td) - new Date(i.han_tt)) / 864e5); ageB[late <= 0 ? 0 : late <= 30 ? 1 : 2] += rem; });
+  const sv = (LOTS || []).reduce((a, l) => a + (+l.qty || 0) * (+l.don_gia || 0), 0);
+  const low = ops ? [...(D.materials || []).map(m => ({ code: m.ma, ten: m.ten, dvt: m.dvt_kho, min: +m.muc_bao_ton || 0, vt: m.vi_tri_mac_dinh })), ...(D.products || []).map(p => ({ code: p.sku, ten: p.ten, dvt: p.dvt, min: +p.muc_bao_ton || 0, vt: p.vi_tri_mac_dinh }))].filter(x => x.min > 0 && ton(x.code) < x.min) : [];
+  const tracked = ops ? [...(D.materials || []), ...(D.products || [])].filter(x => +x.muc_bao_ton > 0).length : 0;
+  const tr = v => Math.abs(v) >= 1e9 ? num(v / 1e9, 2) + ' tỷ' : Math.abs(v) >= 1e6 ? num(v / 1e6, 1) + ' tr' : vnd(v);
+  // Cảnh báo
+  const al = [];
+  if (ME.role === 'ceo') { if (wait.ceo) al.push(['var(--coral)', `<b>${wait.ceo} đơn</b> vượt chính sách chờ CEO duyệt`, 'orders']); lsx.forEach(l => al.push(['var(--coral)', `Lệnh <b>${esc(l.id)}</b> ${esc(prodName(l.sku))} ${num(l.so_luong)} – chờ CEO duyệt`, 'prod'])); }
+  debtRows.filter(r => +r.qua_han_ngay > 0).sort((a, b) => b.qua_han_tien - a.qua_han_tien).slice(0, 6).forEach(r => { const d = dlr(r.dealer_id); al.push([+r.qua_han_ngay > (+d?.khoa_qua_han_ngay || 30) ? 'var(--coral)' : 'var(--amber)', `<b>${esc(r.ten)}</b> nợ quá hạn ${r.qua_han_ngay} ngày (${tr(r.qua_han_tien)})${+r.qua_han_ngay > (+d?.khoa_qua_han_ngay || 30) ? ' – đơn mới sẽ phải chờ CEO' : ''}`, 'dealers']); });
+  low.slice(0, 6).forEach(x => al.push(['var(--amber)', `<b>${esc(x.ten)}</b> còn ${num(ton(x.code))} ${esc(x.dvt || '')}, dưới mức báo ${num(x.min)}${x.vt ? ' – vị trí ' + esc(x.vt) : ''}`, 'stock']));
+  (D.products || []).filter(p => p.het_han_luu_hanh && p.het_han_luu_hanh <= new Date(Date.now() + 60 * 864e5).toISOString().slice(0, 10)).forEach(p => al.push(['var(--amber)', `<b>${esc(p.ten)}</b> hết hạn lưu hành ${fdate(p.het_han_luu_hanh)}`, 'dm_tp']));
+  (D.machines || []).filter(m => m.active !== false && m.han_ke_tiep && m.han_ke_tiep < td).forEach(m => al.push(['var(--amber)', `Bảo trì <b>${esc(m.ten)}</b> quá hạn từ ${fdate(m.han_ke_tiep)}`, 'dm_may']));
+  if (wait.kt && ['ke_toan', 'ceo'].includes(ME.role)) al.push(['var(--blue)', `<b>${wait.kt} đơn</b> chờ Kế toán duyệt`, 'orders']);
+  if (wait.gsv && ['gsv', 'ceo'].includes(ME.role)) al.push(['var(--blue)', `<b>${wait.gsv} đơn</b> chờ GSV duyệt`, 'orders']);
+  // NVKD
+  const nvs = (D.profiles || []).filter(p => p.role === 'nvkd' && p.active !== false).map(p => ({ n: p.ho_ten, v: byNv[p.id] || 0, t: +tg.find(t => t.ma === p.id)?.doanh_thu || 0 }));
+  const mxNv = Math.max(1, ...nvs.map(n => n.t || n.v));
+  const mx = Math.max(perDay, ...days.map(x => x.v)) * 1.12 || 1, under = perDay ? days.filter(x => x.v < perDay).length : 0;
+  // Thiết lập
+  const steps = [['dm_kho', 'Kho & vị trí lưu', (D.locations || []).filter(l => !isQuar(l.id)).length], ['dm_ncc', 'Nhà cung cấp', (D.suppliers || []).length], ['dm_nvl', 'Nguyên vật liệu', (D.materials || []).filter(m => m.loai === 'NVL').length], ['dm_bb', 'Bao bì', (D.materials || []).filter(m => m.loai === 'Bao bì').length], ['dm_tp', 'Thành phẩm', (D.products || []).length], ['dm_kh', 'Khách hàng / đại lý', (D.dealers || []).length], ['policy', 'Chính sách chiết khấu', (D.policy_periods || []).length], ['perm', 'Tài khoản người dùng', Math.max(0, (D.profiles || []).length - 1)], ['nhap', 'Tồn đầu kỳ (Nhập kho → Nhập khác)', ops ? (LOTS || []).length : 1]];
+  const left = steps.filter(s => !s[2]);
+  const tile = (lbl, val, sub, cls = '', go = '') => `<div class="tile ${cls} ${go ? 'click' : ''}" ${go ? `data-go="${go}"` : ''}><span>${lbl}</span><b>${val}</b><span>${sub}</span></div>`;
+  $('#view').innerHTML = `<p class="note" style="margin-top:0">Tháng ${ym.slice(5)}/${ym.slice(0, 4)} · cập nhật ${ftime(new Date())} · ${ME.role === 'gsv' ? 'Vùng ' + esc(ME.vung || '') : 'Toàn công ty'}${ME.role === 'ceo' ? ' · <a href="#" id="set-tg">Đặt kế hoạch doanh thu</a>' : ''}</p>
+  <div class="tiles">
+   ${tile('Doanh thu tháng (đã xuất)', tr(rev), target ? `${Math.round(rev / target * 100)}% kế hoạch ${tr(target)}` : 'chưa đặt kế hoạch', '', 'orders')}
+   ${tile('Đơn mới trong tháng', tr(booked), `${newM.length} đơn`, '', 'orders')}
+   ${tile('Nợ quá hạn', tr(qh), du ? `${Math.round(qh / du * 100)}% tổng nợ ${tr(du)}` : 'chưa có công nợ', qh ? 'warn' : '', 'dealers')}
+   ${tile('Đơn chờ duyệt', wait.gsv + wait.kt + wait.ceo, `GSV ${wait.gsv} · KT ${wait.kt} · CEO ${wait.ceo}`, wait.ceo ? 'warn' : '', 'orders')}
+   ${ops ? tile('Giá trị tồn kho', tr(sv), `${new Set((LOTS || []).map(l => l.item_code)).size} mặt hàng có tồn`, '', 'stock') : ''}
+   ${ops ? tile('Dưới mức tồn tối thiểu', low.length + ' mã', `trên ${tracked} mã có đặt mức báo`, low.length ? 'warn' : '', 'stock') : ''}
+  </div>
+  <div class="grid g2">
+   <div class="card"><h3>Doanh thu theo ngày${perDay ? ` – ${under}/${days.length} ngày dưới mức cần đạt` : ''}</h3>
+    ${rev || perDay ? `<div class="bars">${days.map(x => `<i class="${perDay && x.v < perDay ? 'low' : ''}" style="height:${Math.max(x.v / mx * 100, x.v ? 2 : 0)}%" title="${x.d}/${ym.slice(5)}: ${vnd(x.v)}"></i>`).join('')}${perDay ? `<div class="tline" style="bottom:${perDay / mx * 100}%"><span>cần ${tr(perDay)}/ngày</span></div>` : ''}</div><div class="xl">${days.map(x => `<span>${x.d % 3 === 1 ? x.d : ''}</span>`).join('')}</div>` : '<p class="note">Chưa có đơn xuất kho trong tháng.</p>'}</div>
+   <div class="card"><h3>Doanh số NVKD${nvs.some(n => n.t) ? ' so mục tiêu tháng' : ' trong tháng'}</h3>
+    ${nvs.length ? nvs.map(n => { const p = n.t ? n.v / n.t * 100 : n.v / mxNv * 100; return `<div class="hb"><span title="${esc(n.n)}">${esc(n.n)}</span><span class="tr"><i class="${n.t ? (p < 60 ? 'low' : p < 80 ? 'mid' : '') : ''}" style="width:${Math.min(p, 100)}%"></i></span><span style="text-align:right">${n.t ? Math.round(p) + '%' : tr(n.v)}</span></div>`; }).join('') : '<p class="note">Chưa có tài khoản NVKD.</p>'}</div>
+   <div class="card"><h3>Tuổi nợ phải thu</h3>${du ? `<div class="stackbar">${[['var(--leaf)'], ['var(--amber)'], ['var(--coral)']].map((c, i) => `<i style="width:${ageB[i] / Math.max(1, ageB[0] + ageB[1] + ageB[2]) * 100}%;background:${c[0]}"></i>`).join('')}</div>${['Trong hạn', 'Quá hạn 1–30 ngày', 'Quá hạn > 30 ngày'].map((t, i) => `<div class="row between" style="font-size:14px"><span><span class="dot" style="display:inline-block;margin:0 6px 0 0;background:${['var(--leaf)', 'var(--amber)', 'var(--coral)'][i]}"></span>${t}</span><b>${tr(ageB[i])}</b></div>`).join('')}` : '<p class="note">Chưa có công nợ.</p>'}</div>
+   <div class="card"><h3>Cảnh báo cần xử lý</h3>${al.slice(0, 12).map(a => `<div class="alert ${a[2] ? 'click' : ''}" ${a[2] && PERM[a[2]] ? `data-go="${a[2]}"` : ''}><span class="dot" style="background:${a[0]}"></span><span>${a[1]}</span></div>`).join('') || '<p class="note">Không có cảnh báo.</p>'}</div>
+  </div>
+  ${left.length ? `<div class="card" style="margin-top:14px"><h3>Còn ${left.length} bước thiết lập ban đầu</h3><p class="note" style="margin-top:-6px">Dashboard sẽ đầy đủ số liệu khi danh mục, tồn đầu kỳ và đơn hàng được nhập.</p>
+   <table><tbody>${steps.map(([v, t, n], i) => `<tr class="${PERM[v] ? 'click' : ''}" data-go="${PERM[v] ? v : ''}"><td style="width:28px"><span class="vno">${i + 1}</span></td><td>${t}</td><td class="n">${n ? '<span class="ok">✓ Đã có</span>' : '<span class="pill p-wait">Chưa có</span>'}</td></tr>`).join('')}</tbody></table></div>` : ''}
+  <p class="note">Phiên bản ${CFG.version}. Doanh thu tính theo đơn đã xuất kho trong tháng (sau chiết khấu).</p>`;
+  $$('#view [data-go]').forEach(r => r.dataset.go && (r.onclick = () => location.hash = r.dataset.go));
+  $('#set-tg') && ($('#set-tg').onclick = e => { e.preventDefault(); targetForm(ym, tg); });
 };
+function targetForm(ym, tg) {
+  const nv = (D.profiles || []).filter(p => p.role === 'nvkd' && p.active !== false), g = ma => tg.find(t => t.ma === ma)?.doanh_thu ?? '';
+  openSheet(`<div class="row between"><h2>Kế hoạch doanh thu tháng ${ym.slice(5)}/${ym.slice(0, 4)}</h2><button class="btn sm" id="close">Đóng</button></div>
+  <div class="field"><label for="tg-all">Toàn công ty (đ)</label><input id="tg-all" type="number" inputmode="numeric" value="${g('ALL')}"></div>
+  ${nv.length ? `<h3 style="font-size:15px">Mục tiêu từng NVKD (đ)</h3><div class="f2">${nv.map(p => `<div class="field"><label for="tg-${p.id}">${esc(p.ho_ten)}</label><input id="tg-${p.id}" data-tg="${p.id}" type="number" inputmode="numeric" value="${g(p.id)}"></div>`).join('')}</div>` : ''}
+  <div class="err bad" id="tg-e"></div><button class="btn pri" id="tg-go">Lưu kế hoạch</button>`);
+  $('#tg-go').onclick = async () => {
+    const rows = [['ALL', $('#tg-all').value], ...$$('[data-tg]').map(i => [i.dataset.tg, i.value])];
+    for (const [ma, v] of rows) { const r = v === '' ? await SB.from('sales_targets').delete().eq('thang', ym).eq('ma', ma) : await SB.from('sales_targets').upsert({ thang: ym, ma, doanh_thu: +v }); if (r.error) return $('#tg-e').textContent = errMsg(r.error); }
+    closeSheet(); toast('Đã lưu kế hoạch'); V.dash();
+  };
+}
 
 // ---------- DANH MỤC ----------
 const KINDS = ['NVL', 'Bao bì', 'Thành phẩm'];
