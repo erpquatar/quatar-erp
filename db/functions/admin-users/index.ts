@@ -60,11 +60,16 @@ Deno.serve(async (req) => {
       if (bad) return json({ error: bad }, 400);
       const password = body.password && String(body.password).length >= 8 ? String(body.password) : tempPassword();
 
+      // Phiếu mời: trigger block_self_signup chỉ cho tạo user khi có phiếu (chặn tự đăng ký)
+      const email = `${username}@${DOMAIN}`;
+      const { error: iErr } = await admin.from("account_invites").upsert({ email, created_at: new Date().toISOString() });
+      if (iErr) return json({ error: "Không tạo được phiếu mời: " + iErr.message }, 500);
       const { data: created, error: cErr } = await admin.auth.admin.createUser({
-        email: `${username}@${DOMAIN}`, password, email_confirm: true, user_metadata: { ho_ten, username },
-        app_metadata: { created_by_admin: true }, // migration 05 chặn mọi tài khoản không có cờ này
+        email, password, email_confirm: true, user_metadata: { ho_ten, username },
+        app_metadata: { created_by_admin: true },
       });
       if (cErr || !created?.user) {
+        await admin.from("account_invites").delete().eq("email", email);
         const msg = cErr?.message?.includes("already") ? "Tên đăng nhập đã tồn tại" : cErr?.message;
         return json({ error: msg }, 400);
       }
